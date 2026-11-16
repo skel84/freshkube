@@ -325,6 +325,7 @@ Read by: debug and stress builds. With `--fixture`, opens the view tabs on inven
 Read by: debug and stress builds. With `--fixture`, shapes Settings › Team setup (`settings-team`).
 
 - `failed`: the last fetches failing since 30 hours ago while the applied version stays.
+- `join-failed`: not in a team, and the fetch of any address typed into Join fails.
 - `joined`: joined at the newest version with two ignored keys and two overrides of your own.
 - `none`: not in a team (the default).
 - `trust`: a newer version waiting that changes a signing key, two addresses and a looser protection level.

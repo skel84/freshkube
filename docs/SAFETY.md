@@ -43,6 +43,7 @@ scripts/check-safety-suite.sh                  # fails if a guarantee has no tes
 ### 3. A team floor is never loosened by a personal setting
 
 - `safety_g03_a_team_file_cannot_widen_what_a_persons_setup_restricts` (`crates/freshkube-core/src/team/tests.rs`)
+- `safety_g03_a_wrong_mapping_never_loosens_a_level` (`crates/freshkube-core/src/team/tests.rs`)
 - `safety_g03_an_own_or_default_level_looser_than_the_floor_shows_the_floor` (`crates/freshkube-desktop/src/desktop/settings/entry/protection_tests.rs`)
 - `safety_g03_the_floor_holds_in_both_directions_and_an_unknown_level_is_guarded` (`crates/freshkube-core/src/team/tests.rs`)
 - `safety_g03_the_teams_level_is_a_floor_the_inspector_will_not_go_under` (`crates/freshkube-desktop/src/desktop/settings/entry/protection_tests.rs`)

@@ -22,6 +22,8 @@ pub enum Shape {
     Trust,
     /// Joined, and the last fetches failed.
     Failed,
+    /// Not joined, and the fetch of whatever address is typed fails.
+    JoinFailed,
 }
 
 impl Shape {
@@ -33,6 +35,7 @@ impl Shape {
         ("update", Self::Update),
         ("trust", Self::Trust),
         ("failed", Self::Failed),
+        ("join-failed", Self::JoinFailed),
     ];
 
     pub fn parse(text: &str) -> Option<Self> {
@@ -110,6 +113,11 @@ fn version(id: &str, text: &str, print: &str) -> Version {
     .expect("the example team file is valid")
 }
 
+/// The first version of the example team: what joining it fetches.
+pub fn first_version() -> Version {
+    version("a1b2c3d", V1, "SHA256:aaaa")
+}
+
 /// The source of the example team.
 pub fn source() -> Source {
     Source::parse("https://example.test/acme/freshkube.yaml", "", "").expect("valid example")
@@ -118,7 +126,7 @@ pub fn source() -> Source {
 /// The example membership and, when one waits, its review. `now` is the
 /// clock, so a failure's "since" is told against it.
 pub fn membership(shape: Shape, now: DateTime<Utc>) -> Option<(Membership, Option<Review>)> {
-    if shape == Shape::NoTeam {
+    if matches!(shape, Shape::NoTeam | Shape::JoinFailed) {
         return None;
     }
     let mut mine = Overrides::new();
@@ -129,6 +137,7 @@ pub fn membership(shape: Shape, now: DateTime<Utc>) -> Option<(Membership, Optio
         Ok(version("a1b2c3d", V1, "SHA256:aaaa")),
         now - Duration::days(9),
     );
+    map_by_name(&mut m);
     let mut first = m.review().expect("a first version waits");
     confirm_all(&mut first);
     m.apply(first, now - Duration::days(9)).expect("reviewed");
@@ -148,6 +157,17 @@ pub fn membership(shape: Shape, now: DateTime<Utc>) -> Option<(Membership, Optio
     }
     let review = m.review();
     Some((m, review))
+}
+
+/// Maps each cluster the waiting version names to a context of the same
+/// name, as if the person's kubeconfig had one for each.
+pub fn map_by_name(m: &mut Membership) {
+    let ids: Vec<String> = m
+        .mapping()
+        .clusters()
+        .map(|(id, _)| id.to_string())
+        .collect();
+    m.map_suggested(&ids);
 }
 
 /// Confirms every step of a review, as the person would one by one.

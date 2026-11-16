@@ -521,11 +521,7 @@ fn a_newer_version_ends_a_choice_to_review_later(cx: &mut TestAppContext) {
     assert!(visible(cx, handle, "team-waiting"));
     let settings = page(cx, &view);
     // The same version again keeps the choice.
-    cx.update(|cx| {
-        settings.update(cx, |page, cx| {
-            page.team_fetched(Ok(newer("e4f5a6b")), chrono::Utc::now(), cx)
-        })
-    });
+    cx.update(|cx| settings.update(cx, |page, cx| page.team_fetched(Ok(newer("e4f5a6b")), cx)));
     cx.run_until_parked();
     cx.update_window(handle, |_, window, cx| window.render_frame(cx))
         .unwrap();
@@ -533,11 +529,7 @@ fn a_newer_version_ends_a_choice_to_review_later(cx: &mut TestAppContext) {
     // A failure keeps it too.
     cx.update(|cx| {
         settings.update(cx, |page, cx| {
-            page.team_fetched(
-                Err(freshkube_core::team::FetchFailed("down".into())),
-                chrono::Utc::now(),
-                cx,
-            )
+            page.team_fetched(Err(freshkube_core::team::FetchFailed("down".into())), cx)
         })
     });
     cx.run_until_parked();
@@ -545,11 +537,7 @@ fn a_newer_version_ends_a_choice_to_review_later(cx: &mut TestAppContext) {
         .unwrap();
     assert!(!visible(cx, handle, "team-update"));
     // A different version waits for review again, and is the one reviewed.
-    cx.update(|cx| {
-        settings.update(cx, |page, cx| {
-            page.team_fetched(Ok(newer("9f8e7d6")), chrono::Utc::now(), cx)
-        })
-    });
+    cx.update(|cx| settings.update(cx, |page, cx| page.team_fetched(Ok(newer("9f8e7d6")), cx)));
     cx.run_until_parked();
     cx.update_window(handle, |_, window, cx| window.render_frame(cx))
         .unwrap();
@@ -741,7 +729,7 @@ async fn review_is_held_back_by_unsaved_edits(cx: &mut TestAppContext) {
     cx.update(|cx| {
         settings.update(cx, |page, cx| {
             page.set_team_for_test("version: 1\nclusters:\n  - id: mgmt\n    role: core\n", cx);
-            page.team_fetched(Ok(newer("zz-waiting")), chrono::Utc::now(), cx);
+            page.team_fetched(Ok(newer("zz-waiting")), cx);
         })
     });
     cx.update_window(handle, |_, window, cx| {
