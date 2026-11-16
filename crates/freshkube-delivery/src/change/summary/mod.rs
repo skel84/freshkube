@@ -77,6 +77,8 @@ fn reason(cause: &Cause, hop: &Hop) -> String {
                 .to_lowercase()
         ),
         Cause::Waiting { .. } => "waiting".to_owned(),
+        // Never reached: `fixes` leaves out what is no problem.
+        Cause::NotUsedHere { .. } => "not used here".to_owned(),
     }
 }
 

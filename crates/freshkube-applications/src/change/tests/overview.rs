@@ -53,7 +53,11 @@ fn the_overview_draws_the_strip_and_a_row_of_cells_per_stage(cx: &mut TestAppCon
         assert_eq!(stages, ["dev", "stage", "prod-ams", "prod-lon"]);
         for stage in &stages {
             assert!(window.find(format!("change-matrix-row-{stage}")).visible());
-            for column in Column::ALL {
+            let shown = crate::change::overview::cells::visible(page.read(cx).overview.iter());
+            // Next step is not used by any Stage here, so it is hidden.
+            assert!(!shown.contains(&Column::NextStep));
+            assert_eq!(shown.len(), Column::ALL.len() - 1);
+            for column in shown {
                 assert!(
                     window
                         .find(format!("change-cell-{stage}-{}", column.id()))
@@ -75,7 +79,7 @@ fn every_cell_says_one_word_and_its_cause(cx: &mut TestAppContext) {
             "Eligible",
             "Promoted",
             "Verified",
-            "No Rollout",
+            "Not used here",
             "Synced",
             "Running",
             "Not looked",
@@ -101,7 +105,7 @@ fn every_cell_says_one_word_and_its_cause(cx: &mut TestAppContext) {
                 "Approved",
                 "Promoted",
                 "Failed",
-                "No Rollout",
+                "Not used here",
                 "Synced",
                 "Running",
                 "Not looked"
@@ -228,7 +232,8 @@ fn assert_matrix_rows(cx: &mut TestAppContext, width: f32, height: f32, text: f3
         // before ended, its track fills it, and every track is one line.
         let mut y = None;
         let mut edge = None;
-        for column in Column::ALL {
+        let shown = crate::change::overview::cells::visible(page.read(cx).overview.iter());
+        for column in shown {
             let cell = bounds(window, format!("change-cell-dev-{}", column.id()));
             let track_in = bounds(window, format!("change-cell-dev-{}-track-in", column.id()));
             let track_out = bounds(window, format!("change-cell-dev-{}-track-out", column.id()));
@@ -638,12 +643,13 @@ fn the_rollouts_shape_fills_the_next_step_column_and_says_why_when_it_cant(
             ("Step 2 of 4", Tone::Info)
         );
         assert_eq!(ams.word.as_ref(), "Not reached");
+        assert!(!ams.not_used, "nothing looked, so nothing is unused");
         assert_eq!(ams.track(), Track::Hairline);
-        // A Stage whose Application manages no Rollout. (A Rollout that
-        // couldn't be read says its cause instead: see the refused
-        // Applications test.)
-        assert_eq!(lon.word.as_ref(), "No Rollout");
-        assert!(!lon.reached);
+        // A Stage whose Application manages no Rollout: dim, and nothing to
+        // select. (A Rollout that couldn't be read says its cause instead:
+        // see the refused Applications test.)
+        assert_eq!(lon.word.as_ref(), "Not used here");
+        assert!(lon.not_used && !lon.reached);
         assert_eq!(lon.hop, None);
         // The Stages that run one have its hop, so the cell selects it.
         assert_eq!(dev.hop.as_deref(), Some("dev-rollout"));
@@ -673,7 +679,7 @@ fn every_next_step_has_a_word_that_fits_its_column(cx: &mut TestAppContext) {
                 Tone::Warn,
             ),
             (NextStep::NotReached, "Not reached", Tone::Outline),
-            (NextStep::NoRollout, "No Rollout", Tone::Outline),
+            (NextStep::NoRollout, "Not used here", Tone::Outline),
             (
                 NextStep::Unknown {
                     why: "the Rollout was not read".into(),
@@ -702,7 +708,7 @@ fn a_stage_nothing_looked_at_says_not_reached_and_a_refused_application_says_why
     let (handle, page) = overview_fixture(cx);
     cx.update_window(handle, |_, _, cx| {
         // prod-ams still runs other Freight: nothing looked for its
-        // Application, so it is not "No Rollout".
+        // Application, so it is not "Not used here".
         let p = page.read(cx);
         let ams = p
             .overview
@@ -726,7 +732,7 @@ fn a_stage_nothing_looked_at_says_not_reached_and_a_refused_application_says_why
         let dev = p.overview.iter().find(|row| row.name == "dev").unwrap();
         let cell = &dev.cells[3];
         // Argo CD's Applications were refused: whether a Rollout runs is
-        // not known, and the cell says why instead of "No Rollout".
+        // not known, and the cell says why instead of "Not used here".
         assert_eq!(cell.word.as_ref(), "Can't read");
         assert_ne!(cell.tone, Tone::Crit);
         assert!(cell.reached);

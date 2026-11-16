@@ -1,0 +1,1 @@
+- The change page has a fifth cause, Not used here, for a piece an application isn't expected to have: it is drawn dim, never counted as unknown, and the Overview hides a matrix column that no Stage uses, such as Next step for a project with no Rollouts.

@@ -9,7 +9,7 @@ use crate::rollouts::Rollout;
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum NextStep {
     /// The Stage's Application was read, in this cluster, and manages no
-    /// Rollout: nothing to read.
+    /// Rollout: nothing to read, and the Next step is not used here.
     NoRollout,
     /// Nothing looked for this Stage's Application: the change hasn't got
     /// this far.
@@ -84,7 +84,7 @@ impl NextStep {
     /// The cell's word: at most 14 characters.
     pub fn word(&self) -> String {
         match self {
-            Self::NoRollout => "No Rollout".into(),
+            Self::NoRollout => "Not used here".into(),
             Self::NotReached => "Not reached".into(),
             Self::Step { at, of } => format!("Step {at} of {of}"),
             Self::Progressing => "Progressing".into(),

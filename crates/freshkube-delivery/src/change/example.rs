@@ -1455,7 +1455,7 @@ pub enum Shape {
     /// `stage` degraded, `prod-ams` aborted and `prod-lon` progressing.
     RolloutStates,
     /// The Stages' Rollouts: `dev` is done, `stage` is on step 2 of 4,
-    /// `prod-ams` isn't reached and `prod-lon`'s couldn't be read.
+    /// `prod-ams` isn't reached and `prod-lon` runs none.
     Rollouts,
 }
 

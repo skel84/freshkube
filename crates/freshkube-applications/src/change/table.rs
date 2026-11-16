@@ -117,9 +117,11 @@ pub(super) fn link_mark(confidence: Confidence, cause: Option<&Cause>, cx: &App)
     let p = palette(cx);
     // A link that waits is the clock, not the ring of what can't be said.
     let glyph = match cause {
-        Some(cause) if confidence == Confidence::Unknown && !cause.is_problem() => {
+        Some(cause) if confidence == Confidence::Unknown && cause.is_waiting() => {
             Some(Tone::Waiting)
         }
+        // Not used here has no glyph: nothing is missing.
+        Some(cause) if confidence == Confidence::Unknown && cause.is_not_used_here() => None,
         _ => link_glyph(confidence),
     };
     h_flex()
