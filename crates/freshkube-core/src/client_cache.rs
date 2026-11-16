@@ -780,6 +780,8 @@ mod stable_key_tests {
         // Pinned: the same value in every process and build, so a per-process
         // key (a random hasher) or a changed recipe fails here, not only in
         // a restart. Changing the recipe drops every saved tab's key.
+        // (Unix paths only: `absolute` puts a drive letter on Windows.)
+        #[cfg(unix)]
         assert_eq!(key, "kc:f2cc382528d30ead");
         // Fixed: a SHA-256 of the files and the context, not a per-process hash.
         assert_eq!(key, stable_connection_key(&a, "default"));
@@ -821,6 +823,20 @@ mod stable_key_tests {
         assert_ne!(
             plane,
             talos_connection_key(Some(&config), &file("/k/a.yaml"), "lab")
+        );
+        // The Kubernetes context a chosen file is read with counts too.
+        let chosen = KubeconfigSelection::File {
+            path: PathBuf::from("/k/a.yaml"),
+            context: Some("beta".into()),
+        };
+        assert_ne!(
+            talos_connection_key(Some(&config), &chosen, "lab"),
+            talos_connection_key(Some(&config), &file("/k/a.yaml"), "lab")
+        );
+        #[cfg(unix)]
+        assert_eq!(
+            talos_connection_key(Some(&config), &chosen, "lab"),
+            "kc:ce3ee7139240b536"
         );
     }
 }
