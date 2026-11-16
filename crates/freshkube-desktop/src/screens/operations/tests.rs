@@ -65,6 +65,9 @@ fn mount_sized(
     cx.update(|cx| {
         gpui_kit::init(cx);
         crate::theme::install(cx);
+        // `text_size::set` does nothing without the global, so a test that
+        // sets text 20 would run at 13.
+        crate::text_size::install(None, cx);
     });
     let source = source(context, 0);
     let mut screen = None;
@@ -1705,4 +1708,84 @@ fn a_window_with_no_entry_is_read_by_the_context_it_shows(cx: &mut TestAppContex
         let said = screen.read(cx).notice.clone().unwrap_or_default();
         assert!(said.contains("now read-only; review again"), "{said}");
     });
+}
+
+#[test]
+fn the_unschedulable_warning_follows_the_node_count() {
+    assert_eq!(
+        super::unschedulable_warning(1),
+        "The node stays unschedulable until it is uncordoned."
+    );
+    assert_eq!(
+        super::unschedulable_warning(3),
+        "The nodes stay unschedulable until they are uncordoned."
+    );
+}
+
+/// The tallest confirmation: a drain on a protected cluster, with the target,
+/// the facts, the warnings and the typed name. At 760 by 560 and text size 20
+/// it scrolls inside the room under the title bar's inset, so its title stays
+/// below the header (where macOS draws the window buttons) and its buttons
+/// stay in the window.
+#[gpui_kit::test]
+fn the_tallest_confirmation_keeps_its_title_below_the_title_bar_at_the_smallest_window(
+    cx: &mut TestAppContext,
+) {
+    let (_runtime, screen, handle) = mount_sized(cx, "prod-fra", 25, 760., 560.);
+    cx.update(|cx| {
+        crate::text_size::set(20., cx);
+        crate::mutation::set_protection(freshkube_core::write::Protection::Protected, cx)
+    });
+    set_operation(cx, handle, &screen, OperationKind::Drain);
+    // Every node, so the Target line wraps and the body is at its tallest.
+    // The rows below the first are off screen at this size, so the screen
+    // takes the selection, not a click.
+    let roster = presentation::node_summaries(&fixture::cluster("prod-fra", 1));
+    let nodes = roster.len();
+    cx.update_window(handle.into(), |_, window, cx| {
+        window.render_frame(cx);
+        for node in roster.iter().skip(1) {
+            let target = NodeTarget::new(node.name.clone(), node.address.clone());
+            screen.update(cx, |screen, cx| screen.toggle(target, window, cx));
+        }
+        window.render_frame(cx);
+    })
+    .unwrap();
+    assert_eq!(names(&screen, cx).len(), nodes);
+    assert_eq!(cx.read(crate::text_size::current), 20.);
+    cx.update_window(handle.into(), |_, window, cx| {
+        screen.update(cx, |screen, cx| screen.open_confirmation(window, cx));
+    })
+    .unwrap();
+    crate::mutation::settle_confirmation(cx, handle.into());
+    cx.update_window(handle.into(), |_, window, cx| {
+        window.render_frame(cx);
+        let window_bounds = window.bounds();
+        let header = crate::ui::dp_px(freshkube_ui::page::APP_HEADER_HEIGHT, window);
+        // The review is taller than the room it has, so its body scrolls
+        // inside the dialog and the old, unframed dialog would have been
+        // pushed up under the window buttons.
+        let body = window.find("app-dialog-body").bounds();
+        let content = window.find("confirm-dialog").bounds();
+        assert!(
+            body.size.height < content.size.height,
+            "the body {body:?} does not overflow its content {content:?}"
+        );
+        // Kit pads its content 16 px, so the surface starts that far above
+        // the title.
+        let title = window.find("app-dialog-title").bounds();
+        assert!(
+            title.top() - gpui_kit::px(16.) >= header - gpui_kit::px(1.),
+            "the dialog's title starts at {:?}, under the header's {header:?}",
+            title.top()
+        );
+        for what in ["confirm-type-name", "confirm-ok", "confirm-cancel"] {
+            let bounds = window.find(what).bounds();
+            assert!(
+                bounds.top() >= window_bounds.top() && bounds.bottom() <= window_bounds.bottom(),
+                "{what} {bounds:?} leaves the window {window_bounds:?}"
+            );
+        }
+    })
+    .unwrap();
 }

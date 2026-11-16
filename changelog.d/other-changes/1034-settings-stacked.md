@@ -1,0 +1,1 @@
+- Settings › Clusters keeps its list to one row when the Inspector is stacked, so the entry form has room at small window sizes; the design notes now say why.

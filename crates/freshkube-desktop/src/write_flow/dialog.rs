@@ -41,7 +41,7 @@ pub(super) fn open(
     });
     let flow = flow.clone();
     let scroll = scroll.clone();
-    window.open_dialog(cx, move |dialog, window, cx| {
+    freshkube_ui::dialog::open(window, cx, move |dialog, window, cx| {
         let _kept = &dismissed;
         let (title, countdown) = {
             let flow = flow.read(cx);
@@ -268,6 +268,15 @@ impl WriteFlow {
                     .test_support()
                     .aria_label(ask.sentence.clone())
                     .child(ask.sentence.clone()),
+            )
+            .child(
+                div()
+                    .id("write-kind-and-level")
+                    .test_support()
+                    .aria_label(ask.kind_and_level.clone())
+                    .text_size(dp(12.))
+                    .text_color(p.muted)
+                    .child(ask.kind_and_level.clone()),
             )
             // The name to type comes first: the preview below it may be long.
             .when_some(self.typed.clone(), |this, input| {

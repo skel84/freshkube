@@ -948,6 +948,7 @@ fn an_entry_is_not_called_gone_before_the_setup_is_read(cx: &mut TestAppContext)
             },
             entry: Some("acme".into()),
             cluster: "acme".into(),
+            connection: String::new(),
         };
         assert_eq!(origin.level(cx), OwnLevel::Unknown);
         crate::mutation::set_workspace_levels(

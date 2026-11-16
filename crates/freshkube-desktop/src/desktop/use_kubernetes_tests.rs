@@ -469,3 +469,36 @@ async fn a_picked_context_the_file_lacks_is_refused_and_the_current_one_is_not_t
     });
     cx.run_until_parked();
 }
+
+/// What the dock saves to tell one kubeconfig's cluster from another's holds
+/// across windows on the same files, and differs for another kubeconfig that
+/// shares a context name (#1044).
+#[gpui_kit::test]
+async fn a_kubeconfig_window_has_a_stable_connection_key(cx: &mut TestAppContext) {
+    let first = tempfile::tempdir().unwrap();
+    let other = tempfile::tempdir().unwrap();
+    let (a, b) = (kubeconfig(first.path()), kubeconfig(other.path()));
+    let mut keys = Vec::new();
+    // Two windows on the same file, then one on another file with the same
+    // context names.
+    for file in [a.clone(), a.clone(), b] {
+        cx.executor().allow_parking();
+        let options = GpuiOptions::kubernetes_only(Some(file), Some("beta".into()), 100);
+        let (_runtime, handle, view) = mount(cx, options, 1280., 820.);
+        cx.wait_for_io(handle, |_, cx| {
+            view.read(cx).applied.context.as_deref() == Some("beta")
+        })
+        .await;
+        cx.wait_for_io(handle, |_, cx| view.read(cx).connection_key().is_some())
+            .await;
+        keys.push(cx.update(|cx| view.read(cx).connection_key().unwrap()));
+    }
+    assert!(keys.iter().all(|key| key.starts_with("kc:")), "{keys:?}");
+    assert_eq!(keys[0], keys[1], "the same file and context, two windows");
+    assert_ne!(
+        keys[0], keys[2],
+        "another kubeconfig, the same context name"
+    );
+    // No path in it.
+    assert!(!keys[0].contains(first.path().to_str().unwrap()));
+}
