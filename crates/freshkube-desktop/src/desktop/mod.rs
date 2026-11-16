@@ -1187,7 +1187,9 @@ impl Pilot {
         self.pages
             .custom
             .update(cx, |custom, cx| custom.set_source(kube.clone(), cx));
+        let connection_key = self.connection_key();
         self.pages.dock.update(cx, |dock, cx| {
+            dock.set_connection_key(connection_key);
             dock.set_source(kube, source.kube_identity.as_deref(), window, cx)
         });
         for (_, page) in self.pages.map.iter().filter(|(id, _)| !id.is_screen()) {

@@ -281,6 +281,7 @@ impl Nodes {
                     v_flex()
                         .gap(dp(12.))
                         .child(self.render_node_attention(row.name.as_ref(), cx))
+                        .children(self.alerts_for(&row.name).map(|block| block.render(cx)))
                         .children(
                             row.problems
                                 .iter()
