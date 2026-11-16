@@ -406,9 +406,11 @@ mod live {
             Err("Forbidden: can't list events".into())
         );
         assert!(outcome(Source::Restarts).is_ok());
-        for source in [Source::Promotions, Source::Incidents] {
-            assert_eq!(outcome(source), Err(live::NOT_YET.into()));
-        }
+        assert_eq!(
+            outcome(Source::Promotions),
+            Err("no Kargo Project belongs to it".into())
+        );
+        assert_eq!(outcome(Source::Incidents), Err(live::NOT_YET.into()));
         let timeline = derive(&reads, NOW, 3);
         assert!(timeline.chips.iter().any(
             |chip| chip.source == Source::Events && matches!(chip.state, ChipState::NotRead(_))

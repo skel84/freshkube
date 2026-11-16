@@ -11,7 +11,7 @@ mod reader;
 
 #[cfg(any(test, feature = "testing"))]
 pub use reader::Script;
-pub use reader::{OutcomeReader, ReadConnection};
+pub use reader::{IncidentAnswer, OutcomeReader, ReadConnection};
 
 use super::application::{AppPage, charts};
 use super::*;

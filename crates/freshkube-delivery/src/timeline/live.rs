@@ -14,8 +14,10 @@
 //! An object is the application's by what owns it, never by its name's
 //! start: a pod through its ReplicaSet to the Deployment (or directly its
 //! StatefulSet or DaemonSet), an event through its involved object's kind and
-//! name (a pod that is gone through its ReplicaSet's name). Kargo, Argo CD
-//! and Coroot are not read here yet: their sources say so.
+//! name (a pod that is gone through its ReplicaSet's name). Promotions are
+//! the Kargo Projects' own objects, listed like Syncs' Applications. Coroot's
+//! incidents come through Observability's connection, not a [`Reader`]
+//! ([`super::incidents`]); this leaves that source to say it isn't read.
 use std::collections::HashSet;
 
 use chrono::DateTime;
@@ -42,6 +44,11 @@ pub struct Workload {
 }
 
 impl Workload {
+    /// The kind's name, as Kubernetes and Coroot spell it.
+    pub fn kind_name(&self) -> &'static str {
+        kind_name(self.kind)
+    }
+
     pub fn new(name: &str, kind: WorkloadKind) -> Self {
         Self {
             name: name.to_owned(),
@@ -63,6 +70,11 @@ pub struct Place {
     /// How many of its Argo CD Applications are read through another
     /// connection, so not here.
     pub argo_elsewhere: usize,
+    /// The application's Kargo Projects (their namespaces) in the open
+    /// connection.
+    pub kargo: Vec<String>,
+    /// How many of its Kargo Projects are read through another connection.
+    pub kargo_elsewhere: usize,
 }
 
 /// What belongs to the application in one namespace, from its owners.
@@ -175,14 +187,18 @@ pub async fn read(reader: &impl Reader, scope: &Place, now: i64, hours: u32) -> 
     let from = scope.cluster.as_str();
     let namespaces: Vec<_> = scope.workloads.iter().take(MAX_NAMESPACES).collect();
     let skipped = scope.workloads.len().saturating_sub(MAX_NAMESPACES);
-    let synced = syncs(reader, scope, now, since).await;
+    let (synced, promoted) = futures::join!(
+        syncs(reader, scope, now, since),
+        promotions(reader, scope, now, since)
+    );
     if namespaces.is_empty() {
-        let mut synced = Some(synced);
+        let (mut synced, mut promoted) = (Some(synced), Some(promoted));
         return Source::ALL
             .into_iter()
             .map(|source| match source {
                 Source::Syncs => synced.take().unwrap_or_else(|| not_read(source, now)),
-                Source::Promotions | Source::Incidents => not_read(source, now),
+                Source::Promotions => promoted.take().unwrap_or_else(|| not_read(source, now)),
+                Source::Incidents => not_read(source, now),
                 _ => SourceRead::not_read(
                     source,
                     from,
@@ -277,7 +293,7 @@ pub async fn read(reader: &impl Reader, scope: &Place, now: i64, hours: u32) -> 
         }
     };
     vec![
-        not_read(Source::Promotions, now),
+        promoted,
         synced,
         not_read(Source::Incidents, now),
         read(Source::Deploys, deploys).state_only(),
@@ -369,6 +385,121 @@ async fn syncs(reader: &impl Reader, scope: &Place, now: i64, since: i64) -> Sou
         read = read.cut(&cuts.join("; "));
     }
     read
+}
+
+/// Promotions: each Promotion of the application's Kargo Projects, read from
+/// the Projects' own namespaces. Kargo keeps the Promotions it hasn't pruned,
+/// so a fully read listing speaks for the hours it holds. What it couldn't see
+/// is said and speaks for no hour: Projects read through another connection,
+/// a listing cut at the page cap, Projects past the namespace cap. A Project
+/// that can't be listed is named in the cut; with none read, the source is
+/// not read, with the failure's own reason.
+async fn promotions(reader: &impl Reader, scope: &Place, now: i64, since: i64) -> SourceRead {
+    let from = scope.cluster.as_str();
+    let gone = |why: &str| SourceRead::not_read(Source::Promotions, from, now, why);
+    if scope.kargo.is_empty() {
+        return gone(if scope.kargo_elsewhere > 0 {
+            "its Kargo Project is read through another connection"
+        } else {
+            "no Kargo Project belongs to it"
+        });
+    }
+    let (mut items, mut cuts, mut failures, mut listed_any) =
+        (Vec::new(), Vec::new(), Vec::new(), false);
+    for project in scope.kargo.iter().take(MAX_NAMESPACES) {
+        let listing = Listing::from_listing(
+            crate::kargo::read_kind(reader, "promotions", project, |value| Some(value.clone()))
+                .await,
+        );
+        let (listed, cap) = match listing {
+            Listing::Read(list) => (list, None),
+            Listing::Capped(list, cap) => (list, Some(cap.read)),
+            failed => {
+                let why = match failed {
+                    Listing::NotInstalled(_) => "Kargo's Promotions are not served here".into(),
+                    Listing::Refused(_) => "Forbidden: can't list Promotions".to_owned(),
+                    Listing::Unreadable(why) => format!("can't list Promotions: {why}"),
+                    Listing::Read(_) | Listing::Capped(..) => unreachable!(),
+                };
+                cuts.push(format!("{project} not read: {why}"));
+                failures.push(why);
+                continue;
+            }
+        };
+        listed_any = true;
+        if let Some(read) = cap {
+            cuts.push(format!("cut after {read} Promotions in {project}"));
+        }
+        items.extend(
+            listed
+                .iter()
+                .filter_map(|value| promotion_item(value, since, now)),
+        );
+    }
+    if !listed_any && let Some(why) = failures.into_iter().next() {
+        return gone(&why);
+    }
+    if scope.kargo.len() > MAX_NAMESPACES {
+        cuts.push(format!(
+            "only the first {MAX_NAMESPACES} of {} Kargo Projects were read",
+            scope.kargo.len()
+        ));
+    }
+    if scope.kargo_elsewhere > 0 {
+        let (count, are) = match scope.kargo_elsewhere {
+            1 => ("1 Kargo Project", "is"),
+            n => (&*format!("{n} Kargo Projects"), "are"),
+        };
+        cuts.push(format!("{count} {are} read through another connection"));
+    }
+    let read = SourceRead::read(Source::Promotions, from, now, items);
+    if cuts.is_empty() {
+        read
+    } else {
+        read.cut(&cuts.join("; "))
+    }
+}
+
+/// A Promotion, when it finished in the window or is still going whenever
+/// it started (a Promotion that began before the window sits at its start).
+fn promotion_item(value: &Value, since: i64, now: i64) -> Option<Item> {
+    let phase = text(value, &["status", "phase"]).unwrap_or("Unknown");
+    let running = matches!(phase, "Pending" | "Running");
+    let at = time(value, &["status", "finishedAt"])
+        .or_else(|| time(value, &["metadata", "creationTimestamp"]));
+    let at = if running { at.unwrap_or(now) } else { at? };
+    if at < since && !running {
+        return None;
+    }
+    let early = at < since;
+    let stage = text(value, &["spec", "stage"]).unwrap_or("unknown stage");
+    let mut detail = Vec::new();
+    if early {
+        detail.push("started before this window".to_owned());
+    }
+    let freight =
+        text(value, &["spec", "freight"]).or_else(|| text(value, &["status", "freight", "name"]));
+    if let Some(freight) = freight {
+        detail.push(format!(
+            "freight {}",
+            freight.chars().take(12).collect::<String>()
+        ));
+    }
+    detail.extend(
+        text(value, &["status", "message"])
+            .filter(|message| !message.is_empty())
+            .map(crate::source::redact_message),
+    );
+    Some(Item {
+        at: at.max(since),
+        severity: match phase {
+            "Failed" | "Errored" => Severity::Bad,
+            "Aborted" => Severity::Warn,
+            _ => Severity::Info,
+        },
+        title: format!("Promotion {phase}: {stage}"),
+        detail: detail.join(" · "),
+    })
 }
 
 /// An Application's last operation, when it ran in the window, or is

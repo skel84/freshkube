@@ -13,6 +13,9 @@ use tokio::sync::oneshot;
 /// ("took too long") wins over the job's.
 const DEADLINE: Duration = Duration::from_secs(55);
 
+/// How long a read of Coroot's incidents may take.
+const INCIDENTS_DEADLINE: Duration = Duration::from_secs(30);
+
 /// A little past core's own limit for reading databases' pages.
 const DATABASES_DEADLINE: Duration = Duration::from_secs(50);
 
@@ -194,6 +197,47 @@ impl ReadConnection {
     }
 }
 
+/// What a read of a link's incidents answers: Coroot's list, or why not.
+pub type IncidentAnswer = Result<Vec<api::Incident>, api::ReadError>;
+
+impl ReadConnection {
+    /// Coroot's latest incidents over `link`'s project, for the Timeline's
+    /// window ending at `now`, on Tokio. The list is a bounded sample, never
+    /// filtered by the window. Dropping the job cancels the read.
+    pub fn incidents(
+        &self,
+        link: api::Link,
+        hours: u32,
+        now: chrono::DateTime<chrono::Utc>,
+    ) -> (
+        Option<OwnedJob>,
+        oneshot::Receiver<Result<IncidentAnswer, String>>,
+    ) {
+        match &self.0 {
+            Via::Coroot { runtime, provider } => {
+                let provider = provider.clone();
+                let (job, receiver) = spawn_job(
+                    runtime,
+                    INCIDENTS_DEADLINE,
+                    api::ReadError::Timeout.to_string(),
+                    async move {
+                        let range = api::TimeRange::between(
+                            now - chrono::Duration::hours(i64::from(hours)),
+                            now,
+                        );
+                        Ok(provider
+                            .incidents(&provider.link_source(&link), range)
+                            .await)
+                    },
+                );
+                (Some(job), receiver)
+            }
+            #[cfg(any(test, feature = "testing"))]
+            Via::Scripted(script) => (None, script.ask_incidents(link, hours)),
+        }
+    }
+}
+
 impl ObservabilityPage {
     /// The connection a change page reads over, when one is open.
     pub(crate) fn reader_connection(&self) -> Option<ReadConnection> {
@@ -239,6 +283,7 @@ struct Scripted {
     connected: bool,
     asked: Vec<Asked>,
     databases: Vec<AskedDatabases>,
+    incidents: Vec<AskedIncidents>,
     connects: usize,
     /// The change pages that want the connection.
     wanting: std::collections::BTreeSet<EntityId>,
@@ -251,6 +296,15 @@ pub struct AskedDatabases {
     pub link: api::Link,
     pub wanted: Vec<freshkube_core::databases::coroot::Wanted>,
     answer: Option<oneshot::Sender<Result<freshkube_core::databases::coroot::Evidence, String>>>,
+}
+
+/// A read of a link's incidents asked of the script.
+#[cfg(any(test, feature = "testing"))]
+pub struct AskedIncidents {
+    pub id: api::ProviderId,
+    pub link: api::Link,
+    pub hours: u32,
+    answer: Option<oneshot::Sender<Result<IncidentAnswer, String>>>,
 }
 
 /// A look asked of the script.
@@ -290,6 +344,7 @@ impl Script {
             connected: true,
             asked: Vec::new(),
             databases: Vec::new(),
+            incidents: Vec::new(),
             connects: 0,
             wanting: Default::default(),
         })))
@@ -419,6 +474,55 @@ impl Script {
     ) -> bool {
         let sender = self.0.borrow_mut().databases[index].answer.take();
         sender.is_some_and(|sender| sender.send(Ok(evidence)).is_ok())
+    }
+
+    /// Reads of incidents asked, answered or not.
+    pub fn incidents_asked(&self) -> usize {
+        self.0.borrow().incidents.len()
+    }
+
+    /// What the read at `index` was asked: its link and window in hours.
+    pub fn incidents_at(&self, index: usize) -> (api::Link, u32) {
+        let script = self.0.borrow();
+        (
+            script.incidents[index].link.clone(),
+            script.incidents[index].hours,
+        )
+    }
+
+    /// The connection the read at `index` was asked over.
+    pub fn incidents_id_of(&self, index: usize) -> api::ProviderId {
+        self.0.borrow().incidents[index].id
+    }
+
+    /// Whether the read at `index` was dropped, as hiding drops it.
+    pub fn incidents_dropped(&self, index: usize) -> bool {
+        self.0.borrow().incidents[index]
+            .answer
+            .as_ref()
+            .is_none_or(|a| a.is_closed())
+    }
+
+    /// Answers the read at `index`; whether anyone still waited for it.
+    pub fn answer_incidents(&self, index: usize, answer: IncidentAnswer) -> bool {
+        let sender = self.0.borrow_mut().incidents[index].answer.take();
+        sender.is_some_and(|sender| sender.send(Ok(answer)).is_ok())
+    }
+
+    fn ask_incidents(
+        &self,
+        link: api::Link,
+        hours: u32,
+    ) -> oneshot::Receiver<Result<IncidentAnswer, String>> {
+        let (sender, receiver) = oneshot::channel();
+        let id = self.id();
+        self.0.borrow_mut().incidents.push(AskedIncidents {
+            id,
+            link,
+            hours,
+            answer: Some(sender),
+        });
+        receiver
     }
 
     fn ask_databases(

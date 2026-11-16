@@ -25,12 +25,12 @@ fn page(view: &Entity<Pilot>, cx: &gpui_kit::App) -> Entity<ApplicationPage> {
     list(view, cx).read(cx).open_page().cloned().unwrap()
 }
 
-fn timeline(view: &Entity<Pilot>, cx: &gpui_kit::App) -> Entity<TimelineView> {
+pub(super) fn timeline(view: &Entity<Pilot>, cx: &gpui_kit::App) -> Entity<TimelineView> {
     page(view, cx).read(cx).timeline().clone()
 }
 
 /// checkout's page opened with the example sources in `shape`.
-fn open(
+pub(super) fn open(
     cx: &mut TestAppContext,
     width: f32,
     height: f32,
@@ -54,7 +54,7 @@ fn open(
     (runtime, handle, view)
 }
 
-fn show_timeline(cx: &mut TestAppContext, handle: AnyWindowHandle) {
+pub(super) fn show_timeline(cx: &mut TestAppContext, handle: AnyWindowHandle) {
     cx.update_window(handle, |_, window, cx| {
         window.click("application-tab-timeline", cx);
         window.render_frame(cx);
@@ -63,11 +63,11 @@ fn show_timeline(cx: &mut TestAppContext, handle: AnyWindowHandle) {
     cx.run_until_parked();
 }
 
-fn chips(view: &Entity<Pilot>, cx: &mut TestAppContext) -> Vec<String> {
+pub(super) fn chips(view: &Entity<Pilot>, cx: &mut TestAppContext) -> Vec<String> {
     cx.read(|cx| timeline(view, cx).read(cx).chips_text())
 }
 
-fn lines(view: &Entity<Pilot>, cx: &mut TestAppContext) -> Vec<String> {
+pub(super) fn lines(view: &Entity<Pilot>, cx: &mut TestAppContext) -> Vec<String> {
     cx.read(|cx| timeline(view, cx).read(cx).lines_text())
 }
 
