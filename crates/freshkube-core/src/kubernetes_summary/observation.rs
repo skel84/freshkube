@@ -306,8 +306,10 @@ impl Observation {
         }
         self.revision += 1;
     }
-    pub(super) fn failed(&mut self, failure: ObservationFailure) {
+    /// `stopped`: the read will not try again, whatever the failure's kind.
+    pub(super) fn failed(&mut self, failure: ObservationFailure, stopped: bool) {
         self.status = match failure {
+            ObservationFailure::Read(_) if stopped => ReadStatus::Failed,
             ObservationFailure::Read(FailureKind::Forbidden) => ReadStatus::Refused,
             ObservationFailure::Capacity => ReadStatus::Limited,
             ObservationFailure::InvalidObject => ReadStatus::Failed,

@@ -351,9 +351,15 @@ pub(crate) async fn stream(
             let sender = sender.clone();
             let client = node_client.clone();
             let target = target.clone();
+            // Heard from before the log opens, so a wake while it opens counts.
+            let wakes = freshkube_core::wake::Wakes::new();
             async move {
-                let open = async { client.logs_follow(service.as_ref(), tail).await };
-                pump(open, sender, target, service.clone()).await;
+                // After a wake the log opens again from now: a line written
+                // while the machine slept can be missed, never repeated.
+                let open = |shown: bool| {
+                    client.logs_follow(service.as_ref(), if shown { 0 } else { tail })
+                };
+                pump(open, wakes, sender, target, service.clone()).await;
             }
         })
         .collect::<Vec<_>>();
@@ -400,57 +406,73 @@ where
     OwnedJob::new(runtime.spawn(supervised(pumps)))
 }
 
+/// Follows one service's log into `sender` until it ends, fails or the
+/// receiver closes. A wake drops the stream and opens it again (`open(shown)`,
+/// where `shown` says a line already went out, so the new one starts from
+/// now): the old connection is dead but does not know it. It is no failure,
+/// so no error row, and a stopped log stays stopped: only a pump that exists
+/// hears the wake.
+///
 /// Generic factoring is for lifecycle tests, not a mock Talos transport.
-async fn pump<O, S, E>(
-    open: O,
+async fn pump<Open, Opened, S, E>(
+    mut open: Open,
+    mut wakes: freshkube_core::wake::Wakes,
     sender: mpsc::Sender<StreamEvent>,
     target: Target,
     service: ServiceId,
 ) where
-    O: Future<Output = Result<S, E>>,
+    Open: FnMut(bool) -> Opened,
+    Opened: Future<Output = Result<S, E>>,
     S: Stream<Item = Result<String, E>>,
     E: Display,
 {
-    let opened = tokio::select! {
-        biased;
-        _ = sender.closed() => return,
-        result = tokio::time::timeout(OPEN_DEADLINE, open) => result,
-    };
-    let source = match opened {
-        Ok(Ok(source)) => source,
-        Ok(Err(error)) => {
-            send_event(&sender, &target, &service, Err(error.to_string())).await;
-            return;
-        }
-        Err(_) => {
-            send_event(
-                &sender,
-                &target,
-                &service,
-                Err("Opening the log stream timed out".into()),
-            )
-            .await;
-            return;
-        }
-    };
-    futures::pin_mut!(source);
+    let mut shown = false;
     loop {
-        let next = tokio::select! {
+        let opened = tokio::select! {
             biased;
             _ = sender.closed() => return,
-            line = source.next() => line,
+            // A wake while it opens: the open is dropped and made again.
+            _ = wakes.woke() => continue,
+            result = tokio::time::timeout(OPEN_DEADLINE, open(shown)) => result,
         };
-        let Some(line) = next else { return };
-        let result = line.map_err(|error| error.to_string()).and_then(|line| {
-            if line.len() > MAX_LINE_BYTES {
-                Err("Log line exceeded the 64 KiB limit".into())
-            } else {
-                Ok(line)
+        let source = match opened {
+            Ok(Ok(source)) => source,
+            Ok(Err(error)) => {
+                send_event(&sender, &target, &service, Err(error.to_string())).await;
+                return;
             }
-        });
-        let failed = result.is_err();
-        if !send_event(&sender, &target, &service, result).await || failed {
-            return;
+            Err(_) => {
+                send_event(
+                    &sender,
+                    &target,
+                    &service,
+                    Err("Opening the log stream timed out".into()),
+                )
+                .await;
+                return;
+            }
+        };
+        futures::pin_mut!(source);
+        loop {
+            let next = tokio::select! {
+                biased;
+                _ = sender.closed() => return,
+                _ = wakes.woke() => break,
+                line = source.next() => line,
+            };
+            let Some(line) = next else { return };
+            let result = line.map_err(|error| error.to_string()).and_then(|line| {
+                if line.len() > MAX_LINE_BYTES {
+                    Err("Log line exceeded the 64 KiB limit".into())
+                } else {
+                    Ok(line)
+                }
+            });
+            let failed = result.is_err();
+            if !send_event(&sender, &target, &service, result).await || failed {
+                return;
+            }
+            shown = true;
         }
     }
 }
@@ -482,6 +504,14 @@ mod tests {
     };
 
     use super::*;
+    use freshkube_core::wake::{OwnSignal, Wakes};
+    use std::sync::Arc;
+
+    /// An open that may be made once, as before a wake reopened streams.
+    fn once<F: Future>(open: F) -> impl FnMut(bool) -> F {
+        let mut open = Some(open);
+        move |_| open.take().expect("opened once")
+    }
 
     struct ConfigDirectory(PathBuf);
 
@@ -788,7 +818,13 @@ mod tests {
         };
         let job = supervise(
             &Handle::current(),
-            vec![pump(open, sender, target(), ServiceId::from("kubelet"))],
+            vec![pump(
+                once(open),
+                Wakes::new(),
+                sender,
+                target(),
+                ServiceId::from("kubelet"),
+            )],
         );
         source_started.await.unwrap();
         // Let the child enter the pending source.next() before cancellation.
@@ -813,7 +849,13 @@ mod tests {
         };
         let job = supervise(
             &Handle::current(),
-            vec![pump(open, sender, target(), ServiceId::from("kubelet"))],
+            vec![pump(
+                once(open),
+                Wakes::new(),
+                sender,
+                target(),
+                ServiceId::from("kubelet"),
+            )],
         );
         source_started.await.unwrap();
         receiver.close();
@@ -838,7 +880,13 @@ mod tests {
         };
         let job = supervise(
             &Handle::current(),
-            vec![pump(open, sender, target(), ServiceId::from("kubelet"))],
+            vec![pump(
+                once(open),
+                Wakes::new(),
+                sender,
+                target(),
+                ServiceId::from("kubelet"),
+            )],
         );
         opening_started.await.unwrap();
         receiver.close();
@@ -866,7 +914,13 @@ mod tests {
         };
         let job = supervise(
             &Handle::current(),
-            vec![pump(open, sender, target(), ServiceId::from("kubelet"))],
+            vec![pump(
+                once(open),
+                Wakes::new(),
+                sender,
+                target(),
+                ServiceId::from("kubelet"),
+            )],
         );
         tokio::time::timeout(Duration::from_secs(1), async {
             while receiver.len() < STREAM_QUEUE_CAPACITY {
@@ -896,7 +950,8 @@ mod tests {
         let job = supervise(
             &Handle::current(),
             vec![pump(
-                futures::future::ready(Ok(source)),
+                once(futures::future::ready(Ok(source))),
+                Wakes::new(),
                 sender,
                 identity.clone(),
                 ServiceId::from("kubelet"),
@@ -907,6 +962,190 @@ mod tests {
         assert_eq!(event.service, ServiceId::from("kubelet"));
         assert!(event.result.unwrap_err().contains("64 KiB"));
         assert!(receiver.recv().await.is_none());
+        drop(job);
+    }
+
+    type Lines = Vec<Result<String, String>>;
+
+    /// What each open was asked, and the lines of each source in turn; a
+    /// source that has none left stays open and quiet.
+    #[derive(Clone)]
+    struct Reopening {
+        asked: Arc<std::sync::Mutex<Vec<bool>>>,
+        sources: Arc<std::sync::Mutex<std::collections::VecDeque<Lines>>>,
+    }
+
+    impl Reopening {
+        fn new(sources: Vec<Lines>) -> Self {
+            Self {
+                asked: Default::default(),
+                sources: Arc::new(std::sync::Mutex::new(sources.into())),
+            }
+        }
+
+        fn open(
+            &self,
+            shown: bool,
+        ) -> futures::future::Ready<
+            Result<futures::stream::BoxStream<'static, Result<String, String>>, String>,
+        > {
+            self.asked.lock().unwrap().push(shown);
+            let lines = self.sources.lock().unwrap().pop_front().unwrap_or_default();
+            futures::future::ready(Ok(futures::stream::iter(lines)
+                .chain(futures::stream::pending())
+                .boxed()))
+        }
+
+        fn asked(&self) -> Vec<bool> {
+            self.asked.lock().unwrap().clone()
+        }
+    }
+
+    fn lines(words: &[&str]) -> Lines {
+        words.iter().map(|word| Ok((*word).to_string())).collect()
+    }
+
+    async fn settle() {
+        for _ in 0..20 {
+            tokio::task::yield_now().await;
+        }
+    }
+
+    #[tokio::test]
+    async fn a_wake_opens_the_log_again_from_now_and_no_line_repeats() {
+        let signal = OwnSignal::new();
+        let fake = Reopening::new(vec![lines(&["one", "two"]), lines(&["three"])]);
+        let (sender, mut receiver) = mpsc::channel(STREAM_QUEUE_CAPACITY);
+        let opener = fake.clone();
+        let job = supervise(
+            &Handle::current(),
+            vec![pump(
+                move |shown| opener.open(shown),
+                signal.wakes(),
+                sender,
+                target(),
+                ServiceId::from("kubelet"),
+            )],
+        );
+        for want in ["one", "two"] {
+            assert_eq!(receiver.recv().await.unwrap().result.unwrap(), want);
+        }
+        assert_eq!(fake.asked(), vec![false], "opened once so far");
+        signal.announce();
+        assert_eq!(receiver.recv().await.unwrap().result.unwrap(), "three");
+        assert_eq!(
+            fake.asked(),
+            vec![false, true],
+            "the second open starts from now: a line was already shown"
+        );
+        settle().await;
+        assert!(receiver.try_recv().is_err(), "nothing repeated, no error");
+        // Another wake, another open; the stream goes on.
+        signal.announce();
+        settle().await;
+        assert_eq!(fake.asked(), vec![false, true, true]);
+        drop(job);
+    }
+
+    #[tokio::test]
+    async fn a_wake_while_the_log_is_opening_opens_it_again_with_its_own_tail() {
+        let signal = OwnSignal::new();
+        let asked = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let record = asked.clone();
+        let (sender, mut receiver) = mpsc::channel(STREAM_QUEUE_CAPACITY);
+        let job = supervise(
+            &Handle::current(),
+            vec![pump(
+                move |shown| {
+                    let mut asked = record.lock().unwrap();
+                    asked.push(shown);
+                    let first = asked.len() == 1;
+                    drop(asked);
+                    async move {
+                        if first {
+                            futures::future::pending::<()>().await;
+                        }
+                        Ok::<_, String>(futures::stream::iter([Ok("late".to_string())]))
+                    }
+                },
+                signal.wakes(),
+                sender,
+                target(),
+                ServiceId::from("kubelet"),
+            )],
+        );
+        settle().await;
+        signal.announce();
+        assert_eq!(receiver.recv().await.unwrap().result.unwrap(), "late");
+        assert_eq!(
+            *asked.lock().unwrap(),
+            vec![false, false],
+            "nothing was shown yet, so the tail is the person's own"
+        );
+        drop(job);
+    }
+
+    #[tokio::test]
+    async fn a_stopped_log_is_not_opened_by_a_wake() {
+        let signal = OwnSignal::new();
+        let fake = Reopening::new(vec![lines(&["one"])]);
+        let (sender, mut receiver) = mpsc::channel(STREAM_QUEUE_CAPACITY);
+        let opener = fake.clone();
+        let job = supervise(
+            &Handle::current(),
+            vec![pump(
+                move |shown| opener.open(shown),
+                signal.wakes(),
+                sender,
+                target(),
+                ServiceId::from("kubelet"),
+            )],
+        );
+        assert_eq!(receiver.recv().await.unwrap().result.unwrap(), "one");
+        // Stopping: the receiver closes, then the machine wakes.
+        receiver.close();
+        settle().await;
+        signal.announce();
+        settle().await;
+        assert_eq!(fake.asked(), vec![false], "nothing started again");
+        drop(job);
+    }
+
+    #[tokio::test]
+    async fn a_failed_reopen_after_a_wake_is_one_error_and_the_end() {
+        let signal = OwnSignal::new();
+        let opens = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let counted = opens.clone();
+        let (sender, mut receiver) = mpsc::channel(STREAM_QUEUE_CAPACITY);
+        let job = supervise(
+            &Handle::current(),
+            vec![pump(
+                move |_| {
+                    let first = counted.fetch_add(1, std::sync::atomic::Ordering::SeqCst) == 0;
+                    async move {
+                        if first {
+                            Ok(futures::stream::iter([Ok("one".to_string())])
+                                .chain(futures::stream::pending())
+                                .boxed())
+                        } else {
+                            Err("connection refused".to_string())
+                        }
+                    }
+                },
+                signal.wakes(),
+                sender,
+                target(),
+                ServiceId::from("kubelet"),
+            )],
+        );
+        assert_eq!(receiver.recv().await.unwrap().result.unwrap(), "one");
+        signal.announce();
+        assert_eq!(
+            receiver.recv().await.unwrap().result.unwrap_err(),
+            "connection refused"
+        );
+        assert!(receiver.recv().await.is_none(), "no retry loop");
+        assert_eq!(opens.load(std::sync::atomic::Ordering::SeqCst), 2);
         drop(job);
     }
 }

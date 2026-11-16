@@ -58,6 +58,7 @@ pub mod network;
 pub mod node_health;
 pub mod operations;
 pub mod pcap;
+pub mod reachability;
 pub mod resources;
 pub mod secrets;
 pub mod security_lifecycle;

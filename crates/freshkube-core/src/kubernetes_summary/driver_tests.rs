@@ -458,3 +458,125 @@ async fn a_transient_refusal_of_the_first_list_is_retried_and_recovers() {
     task.abort();
     let _ = task.await;
 }
+
+// Rebuilding the client on `Unauthorized` (#968): once per session identity,
+// never in a loop, and nothing from the old client publishes afterwards.
+
+fn nodes_observation(session: &Session) -> Observation {
+    session.derive(chrono::Utc::now()).summary.observations[&Source::Nodes].clone()
+}
+
+#[tokio::test(start_paused = true)]
+async fn an_unauthorized_read_ends_the_run_so_the_client_is_built_again_and_serves() {
+    let (expired, expired_log) = api_refusing_nodes(false, Some(401), usize::MAX, Duration::ZERO);
+    let session = session();
+    let generation = session.generation();
+    let end = tokio::time::timeout(Duration::from_secs(60), session.run(expired)).await;
+    assert_eq!(end, Ok(RunEnd::CredentialsRejected));
+    assert!(session.generation() > generation, "a new generation begins");
+    let asked = expired_log.calls.lock().unwrap().len();
+
+    let (fresh, fresh_log) = api(false, false);
+    let worker = session.clone();
+    let task = tokio::spawn(async move { worker.run(fresh).await });
+    until(|| nodes_observation(&session).is_current()).await;
+    // Nothing more reached the expired client, and nothing from it landed.
+    tokio::time::sleep(Duration::from_secs(120)).await;
+    assert_eq!(expired_log.calls.lock().unwrap().len(), asked);
+    assert!(nodes_observation(&session).failure().is_none());
+    assert!(!fresh_log.calls.lock().unwrap().is_empty());
+    assert_eq!(*fresh_log.mutations.lock().unwrap(), Vec::<String>::new());
+    assert_eq!(*expired_log.mutations.lock().unwrap(), Vec::<String>::new());
+    task.abort();
+    let _ = task.await;
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_second_401_after_the_rebuild_is_shown_not_retried() {
+    let (first, _) = api_refusing_nodes(false, Some(401), usize::MAX, Duration::ZERO);
+    let (second, second_log) = api_refusing_nodes(false, Some(401), usize::MAX, Duration::ZERO);
+    let session = session();
+    assert_eq!(
+        tokio::time::timeout(Duration::from_secs(60), session.run(first)).await,
+        Ok(RunEnd::CredentialsRejected)
+    );
+    // The same refusal from the new client ends nothing: `run` goes on, and
+    // the failure is what the page shows.
+    let worker = session.clone();
+    let task = tokio::spawn(async move { worker.run(second).await });
+    until(|| {
+        nodes_observation(&session).failure().is_some()
+            && !second_log.calls.lock().unwrap().is_empty()
+    })
+    .await;
+    tokio::time::sleep(Duration::from_secs(120)).await;
+    assert!(
+        !task.is_finished(),
+        "a second rebuild must not be asked for"
+    );
+    assert_eq!(
+        nodes_observation(&session).failure(),
+        Some(&ObservationFailure::Read(
+            crate::failure::FailureKind::Unauthorized
+        ))
+    );
+    assert_eq!(
+        nodes_observation(&session).message(),
+        Some("Kubernetes credentials were rejected")
+    );
+    // And the login is not asked for again: no read of the new client is
+    // retried, however long it waits (each retry would run the login program).
+    let asked = second_log.calls.lock().unwrap().len();
+    tokio::time::sleep(Duration::from_secs(1800)).await;
+    assert_eq!(
+        second_log.calls.lock().unwrap().len(),
+        asked,
+        "a refused login is not retried"
+    );
+    // A Refresh reads again.
+    session.relist();
+    until(|| second_log.calls.lock().unwrap().len() > asked).await;
+    task.abort();
+    let _ = task.await;
+}
+
+#[tokio::test(start_paused = true)]
+async fn rejections_that_arrive_together_share_one_rebuild() {
+    let session = session();
+    // Several sources answer 401 at once.
+    for _ in 0..4 {
+        session.credentials_rejected();
+    }
+    let (first, _) = api(false, false);
+    assert_eq!(
+        tokio::time::timeout(Duration::from_secs(60), session.run(first)).await,
+        Ok(RunEnd::CredentialsRejected)
+    );
+    // The rest of them were already heard: they start no second rebuild.
+    let (second, _) = api(false, false);
+    let ended = tokio::time::timeout(Duration::from_secs(60), session.run(second)).await;
+    assert!(ended.is_err());
+    session.credentials_rejected();
+    let (third, _) = api(false, false);
+    assert!(
+        tokio::time::timeout(Duration::from_secs(60), session.run(third))
+            .await
+            .is_err(),
+        "one rebuild per identity, however many rejections"
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_new_identity_has_its_own_rebuild() {
+    let first = session();
+    let other = Session::new(SessionIdentity::new("synthetic", 2));
+    first.credentials_rejected();
+    other.credentials_rejected();
+    for session in [&first, &other] {
+        let (client, _) = api(false, false);
+        assert_eq!(
+            tokio::time::timeout(Duration::from_secs(60), session.run(client)).await,
+            Ok(RunEnd::CredentialsRejected)
+        );
+    }
+}
