@@ -71,15 +71,37 @@ impl Pilot {
     /// active workspace entry asks for while its connection has not named
     /// one (its kubeconfig can't be read yet, or at all), else none.
     pub(in crate::desktop) fn display_context(&self, cx: &App) -> String {
+        self.chosen_context(cx)
+            .unwrap_or_else(|| "No context".into())
+    }
+
+    /// The context the window is on, if one is chosen: the one applied, else
+    /// the active entry's. Whether a source exists yet is another question.
+    pub(in crate::desktop) fn chosen_context(&self, cx: &App) -> Option<String> {
         if let Some(context) = &self.applied.context {
-            return context.clone();
+            return Some(context.clone());
         }
         let workspace = self.settings_page.read(cx).workspace();
         self.switch
             .active_cluster()
             .and_then(|id| workspace.clusters.iter().find(|entry| entry.id == id))
             .map(|entry| entry.context.clone())
-            .unwrap_or_else(|| "No context".into())
+    }
+
+    /// Whether the connection to the chosen cluster has failed with nothing
+    /// connected: the config, the Kubernetes API or the Talos overview.
+    pub(in crate::desktop) fn connection_has_failed(&self) -> bool {
+        let connected = if let Some(kube) = self.mode().kubernetes_only() {
+            matches!(kube.connection, KubeConnection::Connected { .. })
+        } else {
+            self.overview.data().is_some()
+        };
+        self.config_error.is_some()
+            || self
+                .mode()
+                .kubernetes_only()
+                .is_some_and(|kube| matches!(kube.connection, KubeConnection::Failed(_)))
+            || (!connected && self.overview.error().is_some())
     }
 
     /// The level the window works under right now, from the entry and the
@@ -217,12 +239,7 @@ impl Pilot {
         } else {
             self.overview.data().is_some()
         };
-        let failed = self.config_error.is_some()
-            || self
-                .mode()
-                .kubernetes_only()
-                .is_some_and(|kube| matches!(kube.connection, KubeConnection::Failed(_)))
-            || (!connected && self.overview.error().is_some());
+        let failed = self.connection_has_failed();
         self.context_display.state = if failed {
             Connection::Failed
         } else if connected {

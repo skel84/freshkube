@@ -7,7 +7,7 @@ impl Pilot {
         &mut self,
         epoch: u64,
         request: Request<AppliedConfig>,
-        result: Result<CollectedOverview, String>,
+        result: Result<CollectedOverview, crate::backend::OverviewError>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {

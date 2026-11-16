@@ -595,3 +595,23 @@ fn a_failed_connection_names_the_endpoints_as_host_and_port_only() {
     }
     assert_eq!(tried_endpoints(&[]), "");
 }
+
+#[test]
+fn a_refusal_beats_another_kind_whichever_read_heard_it() {
+    use crate::failure::FailureKind::*;
+    // etcd answered with some other failure while every node refused.
+    assert_eq!(more_telling(Some(Other), Some(Forbidden)), Some(Forbidden));
+    assert_eq!(
+        more_telling(Some(Forbidden), Some(Unreachable)),
+        Some(Forbidden)
+    );
+    assert_eq!(
+        more_telling(Some(Unauthorized), Some(Forbidden)),
+        Some(Unauthorized)
+    );
+    // Without a refusal the first kind stays; nothing keeps the other.
+    assert_eq!(more_telling(Some(Timeout), Some(Other)), Some(Timeout));
+    assert_eq!(more_telling(None, Some(Other)), Some(Other));
+    assert_eq!(more_telling(Some(Other), None), Some(Other));
+    assert_eq!(more_telling(None, None), None);
+}

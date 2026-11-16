@@ -36,8 +36,8 @@ pub(super) struct StaleTalos {
 }
 
 impl StaleTalos {
-    pub(super) fn of<T, I: Clone + Eq>(
-        snapshot: &crate::state::Snapshot<T, I, String>,
+    pub(super) fn of<T, I: Clone + Eq, E: ToString>(
+        snapshot: &crate::state::Snapshot<T, I, E>,
     ) -> Option<Self> {
         if !snapshot.is_stale() {
             return None;
@@ -53,9 +53,8 @@ impl StaleTalos {
                 .unwrap_or_else(|| "earlier".into()),
             reason: snapshot
                 .error()
-                .map(String::as_str)
-                .unwrap_or("The refresh failed.")
-                .to_owned(),
+                .map(ToString::to_string)
+                .unwrap_or_else(|| "The refresh failed.".into()),
         })
     }
 }

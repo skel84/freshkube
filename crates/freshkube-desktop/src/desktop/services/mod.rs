@@ -285,7 +285,7 @@ impl Pilot {
                 .error()
                 .filter(|_| !self.overview.is_loading())
             {
-                Some(error) => TalosReading::Unreachable(error.clone()),
+                Some(error) => TalosReading::Unreachable(error.to_string()),
                 None => TalosReading::Loading,
             },
         };

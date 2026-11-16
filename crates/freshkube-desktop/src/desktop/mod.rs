@@ -343,7 +343,7 @@ pub(crate) struct Pilot {
     follow_spacer: bool,
     configuration_read: Loader<(), Option<ConfigurationRead>>,
     epoch: u64,
-    overview: Snapshot<ClusterOverview, AppliedConfig, String>,
+    overview: Snapshot<ClusterOverview, AppliedConfig, crate::backend::OverviewError>,
     /// The workspace's entries and what the header's switcher shows of them.
     switch: switch::Switcher,
     /// The Talos nodes, the one selected and what is read of it.
