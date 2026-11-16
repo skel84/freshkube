@@ -224,7 +224,7 @@ fn clusters_is_a_table_page_with_an_inspector_at_every_size(cx: &mut TestAppCont
                     "settings-table",
                     "settings-detail",
                     "settings-detail-title",
-                    crate::desktop::settings::STACKED_LIST_LEAST,
+                    freshkube_ui::inspector::PICKER_LIST_MIN_HEIGHT,
                 );
                 let beside =
                     crate::screens::page_width(window) >= freshkube_ui::inspector::SPLIT_WIDTH;

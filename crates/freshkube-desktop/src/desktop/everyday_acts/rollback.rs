@@ -90,7 +90,7 @@ pub(super) fn open(
         error: None,
         handed_on,
     });
-    window.open_dialog(cx, move |view, window, cx| {
+    freshkube_ui::dialog::open(window, cx, move |view, window, cx| {
         let _kept = &dismissed;
         let (title, none_chosen) = {
             let dialog = dialog.read(cx);

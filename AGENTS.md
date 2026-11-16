@@ -182,7 +182,7 @@ Documentation is thin. Before using an API, read the source of the pinned versio
 - macOS reports Command-Shift-] as `}` with Command alone, so bind `secondary-}`, not `secondary-shift-]`. Command-Shift with a letter keeps Shift: `secondary-shift-g`. Those two keys step the shell's view tabs everywhere; a pane's or a node's tabs use Option-Command-] and [, bound as `secondary-alt-]` and `secondary-alt-[` as Zed does. Prove a new bracket binding with a headless `window.press` and say that the running app on macOS is the check that cannot be made headless.
 - A deeper context's binding wins. A handler that calls `cx.propagate()` lets the key reach raw listeners, which is how Enter still presses a focused button.
 - A focused terminal (`freshkube-terminal`) takes shell keys before any binding runs, through a keystroke interceptor, so Escape, Tab, Control-Tab and plain Ctrl-C/V reach the program. Terminal-wide copy, paste and leave use Command on macOS and Ctrl-Shift on Linux/Windows; the interceptor lets those modifiers reach the keymap.
-- `FocusHandle::dispatch_action` runs at once on that node; `window.dispatch_action` is deferred. A Kit dialog remembers what had focus when it opens, so focus its content after `open_dialog`.
+- `FocusHandle::dispatch_action` runs at once on that node; `window.dispatch_action` is deferred. A Kit dialog remembers what had focus when it opens, so focus its content after `freshkube_ui::dialog::open`. Open every dialog through it, never `window.open_dialog`: it places the dialog below the title bar's inset, and `dialog::frame` or `frame_scrolled` keeps a tall body inside the room left.
 
 ### Sizes
 

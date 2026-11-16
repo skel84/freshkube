@@ -66,7 +66,7 @@ pub(super) fn open(
     let form = cx.new(|cx| DestinationForm::new(page, list, editing, entries, window, cx));
     let value = form.read(cx).value.clone();
     let shown = form.clone();
-    window.open_dialog(cx, move |dialog, window, cx| {
+    freshkube_ui::dialog::open(window, cx, move |dialog, window, cx| {
         freshkube_ui::dialog::frame(
             dialog,
             460.,
