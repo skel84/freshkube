@@ -207,3 +207,28 @@ async fn use_the_teams_value_that_would_break_the_file_writes_nothing(cx: &mut T
     );
     assert!(cx.update(|cx| settings.read(cx).team_has_override(key)));
 }
+
+#[gpui_kit::test]
+fn a_file_from_a_newer_app_counts_as_corrupt_and_is_left_as_it_is(cx: &mut TestAppContext) {
+    let directory = tempfile::tempdir().unwrap();
+    let newer = r#"{"version": 99, "membership": {"source": {"address": "x"}}}"#;
+    std::fs::write(directory.path().join("team.json"), newer).unwrap();
+    let (runtime, _handle, _view) = open_on(cx, "settings-team");
+    let again = cx.new(|cx| {
+        super::SettingsPage::new(
+            runtime.handle().clone(),
+            None,
+            Some(&preferences(&directory)),
+            cx,
+        )
+    });
+    cx.update(|cx| {
+        let page = again.read(cx);
+        assert!(page.team.membership().is_none());
+        assert!(page.team_notice().is_some());
+    });
+    assert_eq!(
+        std::fs::read_to_string(directory.path().join("team.json")).unwrap(),
+        newer
+    );
+}
