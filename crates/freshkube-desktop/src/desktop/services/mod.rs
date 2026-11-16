@@ -19,7 +19,7 @@ use std::sync::Arc;
 use std::time::SystemTime;
 use talos_rs::ServiceInfo;
 
-mod restart;
+pub(super) mod restart;
 mod view;
 
 #[derive(Default)]

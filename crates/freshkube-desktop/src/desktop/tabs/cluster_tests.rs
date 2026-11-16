@@ -111,6 +111,53 @@ fn the_switcher_retargets_the_shown_tab_and_keeps_its_page(cx: &mut TestAppConte
     assert_eq!(cx.read(|cx| pilot.read(cx).navigation.page), Page::Nodes);
 }
 
+/// What a pick in the header's cluster list does: it moves the shown tab, so
+/// the count never grows (#1071). Only ⌘-click and Open in new tab add one.
+fn pick(cx: &mut TestAppContext, handle: AnyWindowHandle, pilot: &Entity<Pilot>, id: &str) {
+    cx.update_window(handle, |_, window, cx| {
+        pilot.update(cx, |pilot, cx| {
+            pilot.retarget_shown_tab(id.into(), window, cx)
+        })
+    })
+    .unwrap();
+    cx.run_until_parked();
+}
+
+#[gpui_kit::test]
+fn two_header_picks_with_one_tab_leave_one_tab(cx: &mut TestAppContext) {
+    let (_runtime, handle, pilot) = on_dev(cx);
+    pick(cx, handle, &pilot, "prod-ams");
+    assert_eq!(entries(cx, &pilot), [Some("prod-ams".to_owned())]);
+    pick(cx, handle, &pilot, "stage-fra");
+    assert_eq!(entries(cx, &pilot), [Some("stage-fra".to_owned())]);
+    assert_eq!(active(cx, &pilot), SessionKey::Entry("stage-fra".into()));
+}
+
+/// With the example's three bound tabs (`FRESHKUBE_TABS=clusters`), a pick
+/// still moves the shown tab. It does not activate the tab already bound to
+/// that cluster, so two tabs can end up on one cluster; the count stays three.
+#[gpui_kit::test]
+fn a_header_pick_moves_the_shown_tab_even_when_another_is_bound_there(cx: &mut TestAppContext) {
+    use crate::debug_options::TabsShape;
+    let (_runtime, handle, pilot) = on_dev(cx);
+    cx.update(|cx| {
+        pilot.update(cx, |pilot, cx| pilot.seed_tabs(TabsShape::Clusters, cx));
+    });
+    let seeded = entries(cx, &pilot);
+    assert_eq!(seeded.len(), 3);
+    pick(cx, handle, &pilot, "prod-ams");
+    pick(cx, handle, &pilot, "stage-fra");
+    let after = entries(cx, &pilot);
+    assert_eq!(after.len(), 3, "a pick never adds a tab");
+    assert_eq!(cx.read(|cx| pilot.read(cx).tabs.set.selected()), 0);
+    assert_eq!(after[0], Some("stage-fra".to_owned()));
+    assert_eq!(
+        &after[1..],
+        &seeded[1..],
+        "the other tabs stay where they were"
+    );
+}
+
 /// Right-click on a cluster row offers "Open in new tab", which does what
 /// ⌘-click does: a new tab bound to that cluster, the shown tab left alone.
 #[gpui_kit::test]

@@ -762,7 +762,7 @@ fn a_read_only_cluster_refuses_apply_fix_and_starts_nothing(cx: &mut TestAppCont
     // A confirmation that was open when the level changed.
     cx.update_window(handle.into(), |_, window, cx| {
         screen.update(cx, |screen, cx| {
-            screen.start_fix(KUBELET.into(), window, cx)
+            screen.start_fix(KUBELET.into(), None, window, cx)
         });
     })
     .unwrap();
@@ -794,4 +794,134 @@ fn a_read_only_cluster_refuses_apply_fix_and_starts_nothing(cx: &mut TestAppCont
         assert!(window.find("confirm-dialog").visible());
     })
     .unwrap();
+}
+
+/// A file edited, outside the app, while the Apply fix confirmation was open
+/// is read again at Confirm (#1055): a stricter level, or a file that can't
+/// say, sends nothing, takes no slot, and the notice names the level only.
+fn confirm_fix_after_edit(
+    cx: &mut TestAppContext,
+    edit: impl FnOnce(&crate::mutation::TestSetup),
+    expected: &str,
+) {
+    let (_runtime, screen, handle) = mount(cx, "prod-fra", "talos-wk-fra1-02");
+    let setup = crate::mutation::TestSetup::new(freshkube_core::write::Protection::Guarded, cx);
+    open_fix(cx, handle, &screen, KUBELET);
+    cx.update_window(handle.into(), |_, window, _| {
+        assert!(window.find("confirm-dialog").visible());
+    })
+    .unwrap();
+    edit(&setup);
+    cx.update_window(handle.into(), |_, window, cx| {
+        window.click("confirm-ok", cx)
+    })
+    .unwrap();
+    cx.run_until_parked();
+    assert!(cx.read(|cx| crate::mutation::Operations::current(cx).is_none()));
+    cx.read(|cx| {
+        let notice = screen.read(cx).notice.as_ref().expect("a notice");
+        assert!(!notice.ok, "{}", notice.text);
+        assert!(notice.text.contains(expected), "{}", notice.text);
+        assert!(
+            notice.text.contains("Nothing was started."),
+            "{}",
+            notice.text
+        );
+        // Not the simulated apply that a confirmed example fix reports.
+        assert!(!notice.text.contains("Example data"), "{}", notice.text);
+    });
+}
+
+#[gpui_kit::test]
+fn safety_g28_apply_fix_refuses_when_the_file_got_stricter_while_the_dialog_was_open(
+    cx: &mut TestAppContext,
+) {
+    use freshkube_core::write::Protection;
+    confirm_fix_after_edit(
+        cx,
+        |setup| setup.level(Protection::ReadOnly),
+        "This cluster is now read-only; review again.",
+    );
+}
+
+#[gpui_kit::test]
+fn safety_g28_apply_fix_refuses_when_the_file_cannot_say(cx: &mut TestAppContext) {
+    confirm_fix_after_edit(
+        cx,
+        |setup| setup.remove(),
+        "can't be read from freshkube.yaml",
+    );
+}
+
+/// A looser file changes nothing: the fix is applied as confirmed. In the same
+/// setup a file that can't be read refuses first, which proves the file is
+/// read at all.
+#[gpui_kit::test]
+fn a_looser_file_changes_nothing_for_apply_fix_until_reviewed_again(cx: &mut TestAppContext) {
+    let (_runtime, screen, handle) = mount(cx, "prod-fra", "talos-wk-fra1-02");
+    let setup = crate::mutation::TestSetup::new(freshkube_core::write::Protection::Guarded, cx);
+    // The guard is live: a file that can't be read sends nothing.
+    open_fix(cx, handle, &screen, KUBELET);
+    setup.garble();
+    cx.update_window(handle.into(), |_, window, cx| {
+        window.click("confirm-ok", cx)
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.read(|cx| {
+        let notice = screen.read(cx).notice.as_ref().expect("a notice");
+        assert!(!notice.ok, "{}", notice.text);
+        assert!(
+            notice.text.contains("can't be read from freshkube.yaml"),
+            "{}",
+            notice.text
+        );
+    });
+    // The file back, looser: the same setup applies the fix.
+    setup.level(freshkube_core::write::Protection::Open);
+    open_fix(cx, handle, &screen, KUBELET);
+    cx.update_window(handle.into(), |_, window, cx| {
+        window.click("confirm-ok", cx)
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.read(|cx| {
+        let notice = screen.read(cx).notice.as_ref().expect("a notice");
+        assert!(
+            notice.ok && notice.text.contains("Example data"),
+            "{}",
+            notice.text
+        );
+    });
+}
+
+/// The fix applied is the one the dialog was confirmed on: a refresh that
+/// replaces the snapshot while the file is read can't change which check or
+/// which fix is sent (guarantee 10).
+#[gpui_kit::test]
+fn apply_fix_uses_the_check_confirmed_when_a_refresh_lands_during_the_read(
+    cx: &mut TestAppContext,
+) {
+    let (_runtime, screen, handle) = mount(cx, "prod-fra", "talos-wk-fra1-02");
+    let _setup = crate::mutation::TestSetup::new(freshkube_core::write::Protection::Guarded, cx);
+    open_fix(cx, handle, &screen, KUBELET);
+    cx.update_window(handle.into(), |_, window, cx| {
+        window.click("confirm-ok", cx)
+    })
+    .unwrap();
+    // The read hasn't answered; the check is healthy in the next snapshot, so
+    // it has no fix any more.
+    edit_snapshot(cx, &screen, |snapshot| {
+        let check = check_mut(snapshot, "service_kubelet");
+        check.status = CheckStatus::Pass;
+        check.fix = None;
+    });
+    cx.run_until_parked();
+    cx.read(|cx| {
+        let notice = screen.read(cx).notice.as_ref().expect("a notice");
+        assert!(notice.ok, "{}", notice.text);
+        assert_eq!(notice.key, KUBELET);
+        assert!(notice.text.contains("restart kubelet"), "{}", notice.text);
+    });
+    assert!(cx.read(|cx| crate::mutation::Operations::current(cx).is_none()));
 }
