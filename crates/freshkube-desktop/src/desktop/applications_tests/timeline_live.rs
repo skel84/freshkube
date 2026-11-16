@@ -272,59 +272,101 @@ fn a_window_with_none_says_zero_and_a_quiet_hour_names_promotions_not_incidents(
     );
 }
 
-#[gpui_kit::test]
-fn promotions_not_read_say_why_and_a_cut_one_says_cut(cx: &mut TestAppContext) {
-    let refused = live(cx, Kargo::Refused, link(Some("shop")), 0, &["checkout"]);
-    assert!(
-        chip(&refused, cx, "Promotions").ends_with("not read: Forbidden: can't list Promotions")
-    );
-    let unserved = live(cx, Kargo::NotServed, link(Some("shop")), 0, &["checkout"]);
-    assert!(
-        chip(&unserved, cx, "Promotions")
-            .ends_with("not read: Kargo's Promotions are not served here")
-    );
-    let none = live(cx, Kargo::Items(Vec::new()), link(Some("shop")), 0, &[]);
-    assert!(chip(&none, cx, "Promotions").ends_with("not read: no Kargo Project belongs to it"));
-    let away = live(cx, Kargo::Items(Vec::new()), link(Some("shop")), 1, &[]);
-    assert!(
-        chip(&away, cx, "Promotions")
-            .ends_with("not read: its Kargo Project is read through another connection")
-    );
-    let cut = live(
-        cx,
-        Kargo::Items(vec![promotion(60)]),
-        link(Some("shop")),
-        1,
-        &["checkout"],
-    );
-    assert_eq!(chip(&cut, cx, "Promotions"), "Promotions 1 · cut");
-    let labels = cx.read(|cx| timeline(&cut.view, cx).read(cx).chip_labels());
-    assert!(labels[0].contains("another connection"), "{labels:?}");
+/// One live setup per test: a second one in the same test would leave the
+/// first one's runtime waking the test scheduler from another thread.
+fn promotions_chip(
+    cx: &mut TestAppContext,
+    kargo: Kargo,
+    elsewhere: usize,
+    projects: &[&str],
+) -> (Setup, String) {
+    let setup = live(cx, kargo, link(Some("shop")), elsewhere, projects);
+    let chip = chip(&setup, cx, "Promotions");
+    (setup, chip)
 }
 
 #[gpui_kit::test]
-fn incidents_not_read_say_why_for_each_reason(cx: &mut TestAppContext) {
-    let kargo = || Kargo::Items(Vec::new());
-    let unlinked = live(cx, kargo(), Err(Absent::NotLinked), 0, &["checkout"]);
+fn promotions_refused_are_not_read_and_say_why(cx: &mut TestAppContext) {
+    let (_setup, chip) = promotions_chip(cx, Kargo::Refused, 0, &["checkout"]);
     assert!(
-        chip(&unlinked, cx, "Incidents")
+        chip.ends_with("not read: Forbidden: can't list Promotions"),
+        "{chip}"
+    );
+}
+
+#[gpui_kit::test]
+fn promotions_not_served_are_not_read_and_say_why(cx: &mut TestAppContext) {
+    let (_setup, chip) = promotions_chip(cx, Kargo::NotServed, 0, &["checkout"]);
+    assert!(
+        chip.ends_with("not read: Kargo's Promotions are not served here"),
+        "{chip}"
+    );
+}
+
+#[gpui_kit::test]
+fn an_application_with_no_kargo_project_says_so(cx: &mut TestAppContext) {
+    let (_setup, chip) = promotions_chip(cx, Kargo::Items(Vec::new()), 0, &[]);
+    assert!(
+        chip.ends_with("not read: no Kargo Project belongs to it"),
+        "{chip}"
+    );
+}
+
+#[gpui_kit::test]
+fn a_project_read_through_another_connection_is_not_read_here(cx: &mut TestAppContext) {
+    let (_setup, chip) = promotions_chip(cx, Kargo::Items(Vec::new()), 1, &[]);
+    assert!(
+        chip.ends_with("not read: its Kargo Project is read through another connection"),
+        "{chip}"
+    );
+}
+
+#[gpui_kit::test]
+fn a_promotions_read_in_part_says_cut(cx: &mut TestAppContext) {
+    let (setup, chip) = promotions_chip(cx, Kargo::Items(vec![promotion(60)]), 1, &["checkout"]);
+    assert_eq!(chip, "Promotions 1 · cut");
+    let labels = cx.read(|cx| timeline(&setup.view, cx).read(cx).chip_labels());
+    assert!(labels[0].contains("another connection"), "{labels:?}");
+}
+
+fn incidents_setup(cx: &mut TestAppContext, link: Result<api::Link, Absent>) -> Setup {
+    live(cx, Kargo::Items(Vec::new()), link, 0, &["checkout"])
+}
+
+#[gpui_kit::test]
+fn incidents_of_an_unlinked_cluster_are_not_read_and_ask_nothing(cx: &mut TestAppContext) {
+    let setup = incidents_setup(cx, Err(Absent::NotLinked));
+    assert!(
+        chip(&setup, cx, "Incidents")
             .ends_with("not read: the cluster isn't linked to a Coroot cluster")
     );
-    assert_eq!(unlinked.script.incidents_asked(), 0);
-    let no_project = live(cx, kargo(), Err(Absent::NoProject), 0, &["checkout"]);
+    assert_eq!(setup.script.incidents_asked(), 0);
+}
+
+#[gpui_kit::test]
+fn incidents_without_a_project_are_not_read(cx: &mut TestAppContext) {
+    let setup = incidents_setup(cx, Err(Absent::NoProject));
     assert!(
-        chip(&no_project, cx, "Incidents")
+        chip(&setup, cx, "Incidents")
             .ends_with("not read: no Coroot project is named for the cluster")
     );
-    let refused = live(cx, kargo(), link(Some("shop")), 0, &["checkout"]);
-    answer(&refused, cx, Err(api::ReadError::Refused));
+}
+
+#[gpui_kit::test]
+fn incidents_coroot_refuses_are_not_read(cx: &mut TestAppContext) {
+    let setup = incidents_setup(cx, link(Some("shop")));
+    answer(&setup, cx, Err(api::ReadError::Refused));
     assert!(
-        chip(&refused, cx, "Incidents")
+        chip(&setup, cx, "Incidents")
             .ends_with("not read: Forbidden: Coroot refused the incidents")
     );
-    let down = live(cx, kargo(), link(Some("shop")), 0, &["checkout"]);
-    answer(&down, cx, Err(api::ReadError::Unreachable));
-    assert!(chip(&down, cx, "Incidents").ends_with("not read: Unreachable: Coroot didn't answer"));
+}
+
+#[gpui_kit::test]
+fn incidents_from_an_unreachable_coroot_are_not_read(cx: &mut TestAppContext) {
+    let setup = incidents_setup(cx, link(Some("shop")));
+    answer(&setup, cx, Err(api::ReadError::Unreachable));
+    assert!(chip(&setup, cx, "Incidents").ends_with("not read: Unreachable: Coroot didn't answer"));
 }
 
 #[gpui_kit::test]
