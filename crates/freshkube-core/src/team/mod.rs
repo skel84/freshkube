@@ -5,10 +5,11 @@
 //! wins ([`merge`]), how a new version is reviewed before it applies
 //! ([`review`]) and what joining, failing and leaving do ([`membership`]).
 //!
-//! Fetching runs nothing from the repository. [`source::GitFetch`] only
-//! describes the git command; a later slice runs it.
+//! Fetching runs nothing from the repository. [`source::GitFetch`] describes
+//! the git command and [`fetch`] runs it, or an HTTPS request, bounded.
 
 pub mod example;
+pub mod fetch;
 pub mod file;
 pub mod keyfile;
 pub mod membership;
@@ -19,8 +20,9 @@ pub mod source;
 #[cfg(test)]
 mod tests;
 
+pub use fetch::{GitRunner, HttpsFetch, Limits, TeamFetcher};
 pub use file::{Ignored, IgnoredKey, Values, Version, VersionError};
-pub use keyfile::{KeyFileError, resolve_in_repo};
+pub use keyfile::{KeyFileError, check_repo_path, fingerprint, resolve_in_repo};
 pub use membership::{Failure, Fetch, FetchFailed, Leave, Membership, Overrides};
 pub use merge::{
     ClusterView, LevelSource, Origin, Resolved, allowed_levels, cluster_view, floor_words, resolve,
