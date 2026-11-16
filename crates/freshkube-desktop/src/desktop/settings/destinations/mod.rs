@@ -298,7 +298,7 @@ impl Destinations {
              again. Nothing on a cluster is touched."
         )
         .into();
-        window.open_dialog(cx, move |dialog, window, _| {
+        freshkube_ui::dialog::open(window, cx, move |dialog, window, _| {
             let confirm_page = page.clone();
             let confirm_key = key.clone();
             freshkube_ui::dialog::frame(

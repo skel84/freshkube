@@ -134,7 +134,7 @@ impl Pilot {
         });
         let pilot = cx.entity().downgrade();
         let on_close = search.downgrade();
-        window.open_dialog(cx, move |dialog, window, _| {
+        freshkube_ui::dialog::open(window, cx, move |dialog, window, _| {
             let pilot = pilot.clone();
             let on_close = on_close.clone();
             let entity = search.clone();
