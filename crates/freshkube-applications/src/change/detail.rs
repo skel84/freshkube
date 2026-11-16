@@ -758,10 +758,12 @@ impl ChangePage {
                     label: "Open Settings".into(),
                     tooltip: Some(
                         format!(
-                            "Set {} ({}) in Settings › {}",
+                            // Short lines, so the tooltip fits a narrow window;
+                            // the key is last, after the words.
+                            "Set {}\nin Settings › {}\nSetup key: {}",
                             field.means,
-                            field.field,
-                            settings_title(field.section)
+                            settings_title(field.section),
+                            field.field
                         )
                         .into(),
                     ),
