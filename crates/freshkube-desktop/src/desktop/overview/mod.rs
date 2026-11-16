@@ -270,7 +270,7 @@ impl super::Pilot {
     /// Why the connection failed, in the words the failure came with: the
     /// Kubernetes API's, else the config's or the Talos overview's. `None`
     /// while the connection hasn't failed.
-    fn connection_failure(&self) -> Option<SharedString> {
+    pub(in crate::desktop) fn connection_failure(&self) -> Option<SharedString> {
         if self.context_display.state != Connection::Failed {
             return None;
         }

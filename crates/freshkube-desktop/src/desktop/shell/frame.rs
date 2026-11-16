@@ -626,6 +626,12 @@ impl Pilot {
 /// rest "Couldn't read".
 pub(super) fn overview_unavailable(error: Option<&OverviewError>) -> String {
     match error {
+        Some(error) if error.kind == freshkube_core::failure::FailureKind::Config => {
+            format!(
+                "{}: {error} Check the cluster's connection in Settings › Clusters.",
+                overview_lead(error)
+            )
+        }
         Some(error) => format!("{}: {error}", overview_lead(error)),
         None => "Haven't read the cluster yet".into(),
     }
@@ -637,7 +643,8 @@ fn overview_lead(error: &OverviewError) -> &'static str {
     match error.kind {
         Forbidden | Unauthorized => "Not allowed to read the cluster",
         Unreachable | Timeout => "Couldn't reach the cluster",
-        Config | NotFound | Other => "Couldn't read the cluster",
+        Config => "Can't use this cluster's connection settings",
+        NotFound | Other => "Couldn't read the cluster",
     }
 }
 
@@ -653,6 +660,29 @@ mod words_tests {
         assert_eq!(
             overview_unavailable(Some(&"connection refused".into())),
             "Couldn't read the cluster: connection refused"
+        );
+    }
+
+    /// From a real gRPC status to the words, through core's classifier.
+    #[test]
+    fn a_grpc_refusal_reads_not_allowed_and_a_bad_config_reads_as_one() {
+        use crate::backend::OverviewError;
+        use freshkube_core::failure::Failure;
+        let refused = talos_rs::TalosError::Grpc(tonic::Status::permission_denied("no access"));
+        let words = overview_unavailable(Some(&Failure::from_talos(&refused).into()));
+        assert!(
+            words.starts_with("Not allowed to read the cluster"),
+            "{words}"
+        );
+        let down = talos_rs::TalosError::Grpc(tonic::Status::unavailable("gone"));
+        let words = overview_unavailable(Some(&OverviewError::from(Failure::from_talos(&down))));
+        assert!(words.starts_with("Couldn't reach the cluster"), "{words}");
+        let bad = talos_rs::TalosError::NoEndpoints("prod-fra".into());
+        let words = overview_unavailable(Some(&OverviewError::from(Failure::from_talos(&bad))));
+        assert!(
+            words.starts_with("Can't use this cluster's connection settings")
+                && words.ends_with("Settings › Clusters."),
+            "{words}"
         );
     }
 

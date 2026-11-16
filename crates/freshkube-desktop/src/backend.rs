@@ -201,6 +201,13 @@ impl std::fmt::Display for OverviewError {
     }
 }
 
+/// A classified failure keeps its kind.
+impl From<freshkube_core::failure::Failure> for OverviewError {
+    fn from(failure: freshkube_core::failure::Failure) -> Self {
+        Self::new(failure.kind, failure.message)
+    }
+}
+
 /// A failure that says no more than its words is of no particular kind.
 impl From<String> for OverviewError {
     fn from(message: String) -> Self {
@@ -282,7 +289,7 @@ pub(crate) fn collect(
                 .map_err(|error| OverviewError::new(FailureKind::Config, error.to_string()))?;
             let mut snapshot = snapshots.pop().ok_or_else(|| "No Talos context was loaded".to_string())?;
             if snapshot.client.is_none() {
-                return Err(OverviewError::new(FailureKind::Unreachable, snapshot.connection.error().unwrap_or("Talos context is disconnected")));
+                return Err(OverviewError::new(snapshot.failure.unwrap_or(FailureKind::Unreachable), snapshot.connection.error().unwrap_or("Talos context is disconnected")));
             }
             let current = freshkube_core::AccessIdentity::for_talos(snapshot.client.as_ref().unwrap(), &kubeconfig);
             access = Some(current);
@@ -314,7 +321,11 @@ pub(crate) fn collect(
 
 fn require_fresh_node_data(snapshot: ClusterOverview) -> Result<ClusterOverview, OverviewError> {
     if snapshot.versions.is_empty() && snapshot.services.is_empty() {
-        return Err("No fresh node version or service responses were received; roster data alone does not establish node health".into());
+        // The kind the refresh kept when it failed, so a refusal stays one.
+        return Err(OverviewError::new(
+            snapshot.failure.unwrap_or(FailureKind::Other),
+            "No fresh node version or service responses were received; roster data alone does not establish node health",
+        ));
     }
     Ok(snapshot)
 }
@@ -826,6 +837,18 @@ mod tests {
         assert_eq!(bounded_tail(-1), 0);
         assert_eq!(bounded_tail(i32::MAX), MAX_TAIL_LINES);
         assert_eq!(bounded_tail(17), 17);
+    }
+
+    #[test]
+    fn a_refusal_kept_by_the_refresh_stays_a_refusal() {
+        let snapshot = ClusterOverview {
+            failure: Some(FailureKind::Forbidden),
+            ..Default::default()
+        };
+        let Err(error) = require_fresh_node_data(snapshot) else {
+            panic!("a roster alone is no fresh read");
+        };
+        assert_eq!(error.kind, FailureKind::Forbidden);
     }
 
     #[test]

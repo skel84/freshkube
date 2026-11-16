@@ -38,9 +38,10 @@ impl Source {
         context: &str,
     ) -> Option<Result<ClusterOverview, crate::backend::OverviewError>> {
         if std::mem::take(&mut self.fail_next) {
-            return Some(Err(
-                "Example: the Talos API didn't answer within 10 s".into()
-            ));
+            return Some(Err(crate::backend::OverviewError::new(
+                freshkube_core::failure::FailureKind::Timeout,
+                "Example: the Talos API didn't answer within 10 s",
+            )));
         }
         if self.hold.talos {
             return None;
