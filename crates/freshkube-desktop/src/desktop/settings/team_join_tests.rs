@@ -564,58 +564,75 @@ fn an_address_with_a_credential_does_not_stay_in_the_field(cx: &mut TestAppConte
 }
 
 #[gpui_kit::test]
-fn a_live_apply_shows_no_team_floor_the_write_path_does_not_use(cx: &mut TestAppContext) {
-    // Until the overlay lands, the header, the status bar and the write module
-    // use the file's own level, so Clusters must show that same level and no
-    // Team chip, however the team's clusters were mapped.
+fn a_live_apply_shows_the_floor_the_write_path_uses(cx: &mut TestAppContext) {
+    // The levels a row shows are the ones the write path reads: the entry's
+    // own, held up to the floor of the team cluster mapped to its context,
+    // through `Workspace::level_of`, which the header, the status bar, the
+    // dock and the send step all use.
     let (_runtime, handle, view) = open_on(cx, "settings-clusters");
     let settings = page(cx, &view);
-    cx.update(|cx| {
-        settings.update(cx, |page, cx| {
-            page.team.set_shows_floors(false);
-            page.derive_levels();
-            cx.notify();
-        })
-    });
-    let levels = |cx: &mut TestAppContext| {
+    let write_path = |cx: &mut TestAppContext| {
         cx.update(|cx| {
-            settings
-                .read(cx)
-                .rows
+            let page = settings.read(cx);
+            page.rows
                 .iter()
-                .map(|row| (row.id.to_string(), row.level, row.level_source))
+                .map(|row| {
+                    let own = row.protection.unwrap_or_default();
+                    let used = page
+                        .workspace()
+                        .level_of(row.context.as_ref(), &page.source_recovery)
+                        .stricter(own);
+                    (row.id.to_string(), row.level, used, row.level_source)
+                })
                 .collect::<Vec<_>>()
         })
     };
-    let before = levels(cx);
-    assert!(!before.is_empty());
     cx.update(|cx| {
         settings.update(cx, |page, cx| {
             page.set_team_example(Shape::NoTeam, cx);
-            page.team.set_shows_floors(false);
+        })
+    });
+    let before = write_path(cx);
+    assert!(!before.is_empty());
+    for (id, shown, used, _) in &before {
+        assert_eq!(shown, used, "{id}: no team, shown is used");
+    }
+    cx.update(|cx| {
+        settings.update(cx, |page, cx| {
             page.team_join_and_apply_for_test(cx);
         })
     });
     settle(cx, handle);
-    assert_eq!(levels(cx), before, "a mapping and an apply change no level");
     assert_eq!(cx.update(|cx| settings.read(cx).team_applied_count()), 1);
-    for (id, level, source) in levels(cx) {
-        let own = cx.update(|cx| {
-            settings
-                .read(cx)
-                .rows
-                .iter()
-                .find(|row| row.id.as_ref() == id)
-                .and_then(|row| row.protection)
-                .unwrap_or_default()
-        });
-        assert_eq!(level, own, "{id}");
-        assert_ne!(source, freshkube_core::team::LevelSource::Floor, "{id}");
-        assert!(
-            cx.update(|cx| settings.read(cx).team_cluster(&id).is_none()),
-            "{id}"
+    let after = write_path(cx);
+    let mut tightened = false;
+    for ((id, shown, used, source), (_, was, ..)) in after.iter().zip(&before) {
+        assert_eq!(
+            shown, used,
+            "{id}: what Settings shows is what a write is gated on"
         );
+        assert!(shown <= was, "{id}: a team never loosens a row");
+        tightened |= shown < was;
+        let has_view = cx.update(|cx| settings.read(cx).team_cluster(id).is_some());
+        if *source == freshkube_core::team::LevelSource::Floor {
+            assert!(has_view, "{id}: a floor comes with its Team view");
+        }
     }
+    assert!(
+        tightened,
+        "the example team holds at least one mapped context above its own level"
+    );
+    // And the floors are the recovery's, so the header and a write read them.
+    cx.update(|cx| {
+        let page = settings.read(cx);
+        assert!(!page.source_recovery.team_floors().is_unreadable());
+        assert!(
+            page.source_recovery
+                .team_floors()
+                .floor("core-fra")
+                .is_some()
+        );
+    });
 }
 
 const FILE: &str = "https://setup.acme.example/team/freshkube.yaml";

@@ -127,9 +127,11 @@ impl SettingsPage {
             let store = super::store::Store::beside(preferences);
             let restored = store.load();
             self.team.membership = restored.membership;
+            self.team.corrupt = restored.unreadable.is_some();
             self.team.notice = restored.unreadable;
             self.team.store = Some(store);
             self.team.derive();
+            self.apply_team_floors();
         }
         let owner = &mut self.team.owner;
         owner.secrets = secrets.clone();
@@ -598,10 +600,28 @@ impl SettingsPage {
             .is_some_and(|team| team.overrides().contains_key(key))
     }
 
+    /// "Forget it", for the tests.
+    #[cfg(test)]
+    pub(in crate::desktop::settings) fn team_forget_unreadable_for_test(
+        &mut self,
+        cx: &mut Context<Self>,
+    ) {
+        self.team_forget_unreadable(cx);
+    }
+
+    /// Marks the saved team unreadable, as a restore that found it so does.
+    #[cfg(test)]
+    pub(in crate::desktop::settings) fn team_mark_unreadable_for_test(&mut self) {
+        self.team.corrupt = true;
+        self.team.notice = Some("The file that keeps your team setup couldn’t be read.".into());
+        self.team.derive();
+        self.apply_team_floors();
+    }
+
     /// The notice above the section, for the tests.
     #[cfg(test)]
     pub(in crate::desktop::settings) fn team_notice(&self) -> Option<String> {
-        self.team.notice.clone()
+        self.team.shown.notice.clone()
     }
 
     /// Whether the section is in the middle of joining.

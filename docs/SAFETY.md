@@ -276,10 +276,21 @@ The shared team setup file ([features/settings.md](features/settings.md#team-set
 - `safety_g28_a_delete_sends_nothing_when_the_file_went_read_only` (`crates/freshkube-desktop/src/desktop/tests/everyday.rs`)
 - `safety_g28_a_stage_action_through_the_shell_sends_nothing_when_the_file_went_read_only` (`crates/freshkube-desktop/src/desktop/tests/everyday.rs`)
 
+### 32. A team floor reaches the level a write is sent under, and only ever tightens it
+
+- `safety_g32_a_team_floor_holds_the_level_a_write_is_sent_under` (`crates/freshkube-core/src/write/fresh/tests.rs`)
+- `safety_g32_a_floor_that_appears_while_the_dialog_is_open_stops_the_send` (`crates/freshkube-core/src/write/fresh/tests.rs`)
+- `safety_g32_a_floor_that_disappears_while_the_dialog_is_open_does_not_loosen_it` (`crates/freshkube-core/src/write/fresh/tests.rs`)
+- `safety_g32_a_team_file_that_cannot_be_read_holds_every_context_read_only` (`crates/freshkube-core/src/write/fresh/tests.rs`)
+- `safety_g32_a_floor_is_never_a_looser_level_than_the_file_says` (`crates/freshkube-core/src/write/fresh/tests.rs`)
+- `safety_g32_the_send_guard_holds_the_floors_the_window_holds` (`crates/freshkube-desktop/src/mutation_team_tests.rs`)
+- `safety_g32_the_send_step_reads_a_team_saved_since_the_dialog_opened` (`crates/freshkube-desktop/src/mutation_team_tests.rs`)
+- `safety_g32_an_unreadable_team_holds_every_context_read_only_until_it_is_forgotten` (`crates/freshkube-desktop/src/desktop/settings/team_saved_tests.rs`)
+
 ## Known gaps
 
 - Guarantee 28: with no setup file (a legacy `workspace.json` user), an action's destination has no entry in a file, so its level is not re-read at send; it is held to the level the app holds. The cluster's own level is still read, by context.
-- Guarantee 3 is proved where the floor is resolved (`freshkube-core`'s `team`) and where Settings shows and offers levels. The team setup is still example data in the page (a fetch is real in core, but nothing yet joins from the app or saves), so no test can show a fetched floor holding down the level a write is sent under; that test joins the suite when it is.
+- Guarantee 3 is proved where the floor is resolved (`freshkube-core`'s `team`), where Settings shows and offers levels, and, since the overlay (#849, slice 5C), where a write is gated: guarantee 32. What no test proves is a real fetch holding a floor down: the page's tests run on the example script, and the fetch is proved in core (guarantee 27).
 - Guarantee 6 says "never from an agent". The agent can't start an exec or a forward yet (its only tools are the four reads, proved under guarantee 8); a test that the agent never starts one joins the suite when the agent can reach the app (#908).
 - At the window's level the example runner sends nothing, so "no write reached the runner" in the link and search tests is read from the runner's scratch audit (`freshkube-example-audit`), which a write would add a line to. The fake cluster's request recorder is used where a runner is built on it (guarantees 1, 2 and 10).
 - Guarantee 21 has a Windows gap: the Teleport child has no parent-death watcher there (macOS and Linux have one, tested by `the_group_ends_when_the_parent_dies_without_ending_it`), so a crash or a force quit can leave `tsh proxy db` running until its Teleport certificate expires; a clean quit still ends it. A job object, as `freshkube-agent` uses for the agent, would close it.

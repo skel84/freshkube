@@ -6,8 +6,8 @@
 
 use chrono::{DateTime, Utc};
 use freshkube_core::team::{
-    Change, ChangeKind, ClusterView, Leave, LevelSource, Membership, NotReviewed, Origin, Review,
-    Step, cluster_view, example::Shape, resolve,
+    Change, ChangeKind, Choice, ClusterView, Leave, LevelSource, Membership, NotReviewed, Origin,
+    Review, Step, cluster_view, example::Shape, resolve,
 };
 use freshkube_ui::status::{Part, Segment};
 use freshkube_ui::{form, page};
@@ -15,7 +15,7 @@ use gpui_kit::component::{Disableable, Sizable, button::Button, h_flex, v_flex};
 use gpui_kit::prelude::*;
 use gpui_kit::*;
 use serde_json::Value;
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 
 use freshkube_ui::tooltip::FollowTooltip as _;
 
@@ -45,11 +45,10 @@ pub(super) struct TeamState {
     open_requested: bool,
     pub(super) shown: Shown,
     owner: owner::Owner,
-    /// Whether the team's floors and chips reach Settings. Only example data
-    /// and the tests of the floor say yes: the live setup does not take the
-    /// team's values yet, so the header, the status bar and the write module
-    /// still use the file's own level, and Settings must not show another.
-    shows_floors: bool,
+    /// The saved team couldn't be read (a damaged file, one from a newer app,
+    /// an address joining refuses): its floors can't be known, so every
+    /// context is held `read-only` until the person joins again or forgets it.
+    corrupt: bool,
     /// `team.json` beside the preferences, in a live window. Example data
     /// never saves.
     store: Option<store::Store>,
@@ -93,9 +92,15 @@ pub(super) struct Shown {
     failure: Option<FailureWords>,
     refusal: Option<String>,
     notice: Option<String>,
+    /// The notice is the saved team that can't be read, with its action.
+    notice_corrupt: bool,
     yours: Vec<YoursRow>,
-    /// Each cluster the team or you set something for, against the team.
-    clusters: BTreeMap<String, ClusterView>,
+    /// Each of your contexts a team cluster is mapped to, against the team:
+    /// the cluster's floor and how its keys stand.
+    by_context: BTreeMap<String, ClusterView>,
+    /// The same, by the id of each of your entries on such a context, for
+    /// the Clusters rows and the Inspector (`derive_levels`).
+    by_entry: BTreeMap<String, ClusterView>,
     /// The status-bar item while a version waits: a short line, the version
     /// in its tooltip.
     waiting: Option<(Segment, String)>,
@@ -130,11 +135,18 @@ impl Shown {
 }
 
 impl TeamState {
-    /// Turns the floors' reach into Settings off, as it is for a live window.
-    #[cfg(test)]
-    pub(super) fn set_shows_floors(&mut self, shows: bool) {
-        self.shows_floors = shows;
-        self.derive();
+    /// What the team holds each of your contexts to: the floors of what you
+    /// reviewed and applied and the context you chose for each cluster, and
+    /// `read-only` everywhere while the saved team can't be read. Nothing
+    /// waiting, failed or unmapped sets one.
+    pub(super) fn floors(&self) -> freshkube_core::team::TeamFloors {
+        if self.corrupt {
+            return freshkube_core::team::TeamFloors::unreadable();
+        }
+        self.membership
+            .as_ref()
+            .map(freshkube_core::team::TeamFloors::from_membership)
+            .unwrap_or_default()
     }
 
     /// Whether a fetch is in flight, for the tests.
@@ -159,13 +171,9 @@ impl TeamState {
             Some((membership, review)) => Self {
                 membership: Some(membership),
                 review,
-                shows_floors: true,
                 ..Self::default()
             },
-            None => Self {
-                shows_floors: true,
-                ..Self::default()
-            },
+            None => Self::default(),
         };
         state.derive();
         state
@@ -193,9 +201,7 @@ impl TeamState {
                 _ => "Nothing".to_string(),
             };
             shown.yours = yours_rows(team);
-            if self.shows_floors {
-                shown.clusters = cluster_views(team);
-            }
+            shown.by_context = cluster_views(team);
             shown.failure = team.failure().map(|failure| FailureWords {
                 lead: format!("Couldn’t fetch since {}", when(failure.since)),
                 body: format!(
@@ -260,7 +266,13 @@ impl TeamState {
             )
         });
         shown.refusal = self.refusal.map(|why| why.to_string());
-        shown.notice = self.notice.clone();
+        shown.notice = self.notice.clone().map(|words| match self.corrupt {
+            true => format!(
+                "{words} Every cluster is held read-only until you join the team again or forget it."
+            ),
+            false => words,
+        });
+        shown.notice_corrupt = self.corrupt;
         shown.join = self.derive_join();
         self.shown = shown;
     }
@@ -314,19 +326,28 @@ pub(super) fn origin_chip(id: String, origin: Origin, cx: &App) -> Option<AnyEle
 /// Every cluster the team names or you set a key of, against the team.
 fn cluster_views(team: &Membership) -> BTreeMap<String, ClusterView> {
     let theirs = team.team_values();
-    let ids: BTreeSet<&str> = theirs
-        .keys()
-        .chain(team.overrides().keys())
-        .filter_map(|key| {
-            let rest = key.strip_prefix("clusters[")?;
-            rest.split_once(']').map(|(id, _)| id)
-        })
-        .collect();
-    ids.into_iter()
-        .filter_map(|id| {
-            cluster_view(id, &theirs, team.overrides()).map(|view| (id.to_string(), view))
-        })
-        .collect()
+    let mut by_context: BTreeMap<String, ClusterView> = BTreeMap::new();
+    for (id, choice) in team.mapping().clusters() {
+        // A cluster is only ever shown on the context chosen for it: never
+        // one found by its name.
+        let Some(Choice::Context(context)) = choice else {
+            continue;
+        };
+        let Some(view) = cluster_view(id, &theirs, team.overrides()) else {
+            continue;
+        };
+        // Two clusters on one context: the one with the stricter floor.
+        match by_context.get(context) {
+            Some(held)
+                if held
+                    .floor
+                    .is_some_and(|f| view.floor.is_none_or(|v| f <= v)) => {}
+            _ => {
+                by_context.insert(context.to_string(), view);
+            }
+        }
+    }
+    by_context
 }
 
 /// A reason as a sentence: a capital first, a full stop last.
@@ -438,9 +459,20 @@ impl SettingsPage {
     /// Sets each row's level against the team's floor. Run whenever the rows
     /// or the team change, so a draw only reads it.
     pub(super) fn derive_levels(&mut self) {
-        let views = &self.team.shown.clusters;
+        self.apply_team_floors();
+        // A team cluster shows on each of your entries on the context chosen
+        // for it, and on no other.
+        let by_context = &self.team.shown.by_context;
+        let by_entry: BTreeMap<String, ClusterView> = self
+            .rows
+            .iter()
+            .filter_map(|row| {
+                let view = by_context.get(row.context.as_ref())?;
+                Some((row.id.to_string(), view.clone()))
+            })
+            .collect();
         for row in &mut self.rows {
-            (row.level, row.level_source) = match views.get(row.id.as_ref()) {
+            (row.level, row.level_source) = match by_entry.get(row.id.as_ref()) {
                 Some(view) => view.effective(row.protection),
                 None => (
                     row.protection.unwrap_or_default(),
@@ -449,6 +481,15 @@ impl SettingsPage {
                 ),
             };
         }
+        self.team.shown.by_entry = by_entry;
+    }
+
+    /// Gives the setup's recovery the team's floors, which every level a write
+    /// is gated on reads through `Workspace::level_of` (#849): the header, the
+    /// status bar, the dock and the send step. Only ever the stricter.
+    pub(super) fn apply_team_floors(&mut self) {
+        let floors = self.team.floors();
+        self.source_recovery.set_team_floors(floors);
     }
 
     pub(super) fn render_team(&self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
@@ -461,14 +502,31 @@ impl SettingsPage {
             (None, None) => self.team_empty(narrow, cx),
         };
         let notice = self.team.shown.notice.clone().map(|words| {
+            let corrupt = self.team.shown.notice_corrupt;
+            let this = cx.entity();
+            let forget = corrupt.then(|| {
+                Button::new("team-forget-unreadable")
+                    .small()
+                    .outline()
+                    .label("Forget it")
+                    .on_click(move |_, _, cx| {
+                        this.update(cx, |page, cx| page.team_forget_unreadable(cx))
+                    })
+                    .into_any_element()
+            });
+            let lead = if corrupt {
+                "Your team setup couldn’t be read"
+            } else {
+                "Team setup isn’t kept"
+            };
             div()
                 .id("team-notice")
                 .test_support()
                 .child(contained(ui::banner(
                     Tone::Warn,
-                    Some("Team setup isn’t kept".into()),
+                    Some(lead.into()),
                     words,
-                    None,
+                    forget,
                     cx,
                 )))
         });
@@ -848,7 +906,6 @@ impl SettingsPage {
         self.team = TeamState {
             membership: Some(m),
             owner: std::mem::take(&mut self.team.owner),
-            shows_floors: true,
             ..TeamState::default()
         };
         self.team.derive();
@@ -907,7 +964,7 @@ impl SettingsPage {
 
     /// How a cluster stands against the team, for its row and Inspector.
     pub(super) fn team_cluster(&self, id: &str) -> Option<&ClusterView> {
-        self.team.shown.clusters.get(id)
+        self.team.shown.by_entry.get(id)
     }
 
     /// Takes the outcome of a fetch, as the owner does when one lands, for
@@ -970,6 +1027,28 @@ impl SettingsPage {
         cx.notify();
     }
 
+    /// "Forget it": writes no team over the one that couldn't be read, so the
+    /// floors are no longer unknown. A write that fails leaves every context
+    /// held read-only.
+    pub(super) fn team_forget_unreadable(&mut self, cx: &mut Context<Self>) {
+        let Some(store) = &self.team.store else {
+            return;
+        };
+        match store.save(None) {
+            Ok(()) => {
+                self.team.corrupt = false;
+                self.team.notice = None;
+            }
+            Err(error) => {
+                tracing::warn!("the unreadable team setup could not be forgotten: {error}");
+                self.team.notice = Some("It couldn’t be forgotten just now.".into());
+            }
+        }
+        self.team.derive();
+        self.derive_levels();
+        cx.notify();
+    }
+
     /// Saves the membership beside the preferences. Nothing in a window
     /// with no store (example data); a failure is said and the membership
     /// stays in memory.
@@ -978,7 +1057,11 @@ impl SettingsPage {
             return;
         };
         self.team.notice = match store.save(self.team.membership.as_ref()) {
-            Ok(()) => None,
+            Ok(()) => {
+                // What was unreadable is written over: the floors are known.
+                self.team.corrupt = false;
+                None
+            }
             Err(error) => {
                 tracing::warn!("the team setup could not be saved: {error}");
                 Some("Your team setup could not be saved, so a restart will forget it.".into())

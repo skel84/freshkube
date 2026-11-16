@@ -188,12 +188,33 @@ pub(crate) fn send_guard(
     let window = global
         .and_then(|global| global.7.clone())
         .unwrap_or_else(|| context.to_owned());
-    Some(match global.map(|global| (&global.3, global.6)) {
+    let levels = match global.map(|global| (&global.3, global.6)) {
         Some((Some(entry), true)) => SetupLevels::new(file, Subject::Entry(entry.clone())),
         Some((_, false)) => SetupLevels::legacy(file, window),
         _ => SetupLevels::new(file, Subject::Context(window)),
-    })
+    };
+    Some(with_team(levels, global))
 }
+
+/// The team's floors, as the window holds them when the dialog opens, and the
+/// saved team the send step reads again (#849): a floor that appears
+/// meanwhile stops the send, and one that goes does not loosen it.
+fn with_team(
+    levels: freshkube_core::write::SetupLevels,
+    global: Option<&GlobalProtection>,
+) -> freshkube_core::write::SetupLevels {
+    let held = global
+        .and_then(|global| global.2.as_ref())
+        .map(|(_, recovery)| recovery.team_floors().clone())
+        .unwrap_or_default();
+    let team_file = global
+        .and_then(|global| global.4.as_ref())
+        .map(|file| file.with_file_name(TEAM_FILE));
+    levels.with_team(held, team_file)
+}
+
+/// The saved team's file beside the setup file and the preferences.
+pub(crate) const TEAM_FILE: &str = "team.json";
 
 /// What a write runner reads again at its send step, for the cluster the
 /// runner writes to: the workspace entry `entry` when the setup file lists
@@ -232,13 +253,14 @@ pub(crate) fn runner_guard(
                 .as_ref()
                 .is_some_and(|(workspace, _)| workspace.clusters.iter().any(|e| e.id == entry))
         });
-    if !from_file {
+    let levels = if !from_file {
         SetupLevels::legacy(file, context)
     } else if listed {
         SetupLevels::new(file, Subject::Entry(entry.to_owned()))
     } else {
         SetupLevels::new(file, Subject::Context(context))
-    }
+    };
+    with_team(levels, global)
 }
 
 /// The notice when the window went away while the setup file was read: a

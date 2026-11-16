@@ -291,9 +291,11 @@ impl SettingsPage {
                 });
                 if !self.uses_setup
                     || self.workspace != setup.workspace
-                    || self.source_recovery != source_recovery
+                    || !self.source_recovery.same_file_as(&source_recovery)
                 {
                     self.source_recovery = source_recovery;
+                    // The team's floors are not in the file; they stay.
+                    self.apply_team_floors();
                     self.uses_setup = true;
                     self.set_workspace(&Loaded::Workspace(setup.workspace), false, cx);
                 }

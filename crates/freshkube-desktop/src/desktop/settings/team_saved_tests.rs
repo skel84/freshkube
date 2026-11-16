@@ -232,3 +232,95 @@ fn a_file_from_a_newer_app_counts_as_corrupt_and_is_left_as_it_is(cx: &mut TestA
         newer
     );
 }
+
+fn context_levels(
+    cx: &mut TestAppContext,
+    settings: &gpui_kit::Entity<super::SettingsPage>,
+) -> (
+    freshkube_core::write::Protection,
+    freshkube_core::write::Protection,
+) {
+    cx.update(|cx| {
+        let page = settings.read(cx);
+        let level = |context: &str| page.workspace().level_of(context, &page.source_recovery);
+        (level("acme-mgmt"), level("a-context-no-entry-names"))
+    })
+}
+
+#[gpui_kit::test]
+fn safety_g32_an_unreadable_team_holds_every_context_read_only_until_it_is_forgotten(
+    cx: &mut TestAppContext,
+) {
+    use freshkube_core::write::Protection;
+    let directory = tempfile::tempdir().unwrap();
+    std::fs::write(directory.path().join("team.json"), "{ not json").unwrap();
+    let (runtime, handle, _view) = open_on(cx, "settings-team");
+    let again = cx.new(|cx| {
+        super::SettingsPage::new(
+            runtime.handle().clone(),
+            None,
+            Some(&preferences(&directory)),
+            cx,
+        )
+    });
+    // The floors can't be known, so nothing is looser than read-only, whatever
+    // the entry says or no entry says.
+    assert_eq!(
+        context_levels(cx, &again),
+        (Protection::ReadOnly, Protection::ReadOnly)
+    );
+    cx.update(|cx| {
+        let notice = again.read(cx).team_notice().expect("said");
+        assert!(notice.contains("read-only"), "{notice}");
+    });
+    // Forgetting it writes no team over it, and the hold ends.
+    cx.update(|cx| again.update(cx, |page, cx| page.team_forget_unreadable_for_test(cx)));
+    settle(cx, handle);
+    assert_eq!(
+        context_levels(cx, &again),
+        (Protection::Guarded, Protection::Guarded)
+    );
+    cx.update(|cx| assert!(again.read(cx).team_notice().is_none()));
+    // And the next start finds no team.
+    let after = cx.new(|cx| {
+        super::SettingsPage::new(
+            runtime.handle().clone(),
+            None,
+            Some(&preferences(&directory)),
+            cx,
+        )
+    });
+    assert_eq!(
+        context_levels(cx, &after),
+        (Protection::Guarded, Protection::Guarded)
+    );
+}
+
+#[gpui_kit::test]
+fn an_unreadable_team_is_held_until_a_join_writes_a_team_over_it(cx: &mut TestAppContext) {
+    use freshkube_core::write::Protection;
+    let directory = tempfile::tempdir().unwrap();
+    std::fs::write(directory.path().join("team.json"), "{ not json").unwrap();
+    let (runtime, handle, _view) = open_on(cx, "settings-team");
+    let again = cx.new(|cx| {
+        super::SettingsPage::new(
+            runtime.handle().clone(),
+            None,
+            Some(&preferences(&directory)),
+            cx,
+        )
+    });
+    assert_eq!(context_levels(cx, &again).1, Protection::ReadOnly);
+    // A join that applies saves the team, which is read again from now on.
+    cx.update(|cx| {
+        again.update(cx, |page, cx| {
+            page.set_team_example(freshkube_core::team::example::Shape::NoTeam, cx);
+            page.team_use_store_for_test(&preferences(&directory));
+            page.team_mark_unreadable_for_test();
+            page.team_join_and_apply_for_test(cx);
+        })
+    });
+    settle(cx, handle);
+    // Not read-only everywhere any more: only what the team's floors hold.
+    assert_eq!(context_levels(cx, &again).1, Protection::Guarded);
+}

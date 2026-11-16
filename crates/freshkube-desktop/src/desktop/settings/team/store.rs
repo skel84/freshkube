@@ -8,7 +8,7 @@ use std::path::Path;
 use freshkube_core::team::{Membership, SavedTeam};
 use freshkube_prefs::{Dir, Document, Layout};
 
-const NAME: &str = "team.json";
+const NAME: &str = crate::mutation::TEAM_FILE;
 /// The file is read to at most this many bytes.
 const LIMIT: u64 = 2 * 1024 * 1024;
 
