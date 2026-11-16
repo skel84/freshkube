@@ -155,6 +155,11 @@ impl TableState {
     pub fn reveal_whole(&self, line: usize, lines: usize) {
         match self.last_whole_row(line, lines) {
             Some(top) => self.scroll.scroll_to_item_strict(top, ScrollStrategy::Top),
+            // A window shorter than a row shows its top, where the row's
+            // first line is.
+            None if self.window_is_shorter_than_a_row(lines) => {
+                self.scroll.scroll_to_item_strict(line, ScrollStrategy::Top)
+            }
             None => self.scroll.scroll_to_item(line, ScrollStrategy::Nearest),
         }
     }
@@ -164,6 +169,32 @@ impl TableState {
     /// before it has drawn, when the window holds less than a row, or when
     /// `line` shows already or is above.
     fn last_whole_row(&self, line: usize, lines: usize) -> Option<usize> {
+        let (first, whole) = self.whole_window(lines)?;
+        (line >= first + whole).then(|| line + 1 - whole)
+    }
+
+    /// Whether the list's last frame drew a window shorter than one row.
+    fn window_is_shorter_than_a_row(&self, lines: usize) -> bool {
+        let state = self.scroll.0.borrow();
+        let Some(last) = state.last_item_size else {
+            return false;
+        };
+        let row = f32::from(last.contents.height) / lines.max(1) as f32;
+        row >= 1. && f32::from(state.base_handle.bounds().size.height) < row
+    }
+
+    /// Whether `line` shows whole in the window, as the list's last frame
+    /// drew it; `None` before it has drawn or when the window holds less
+    /// than a row, when nothing can be said yet.
+    pub fn shows_whole(&self, line: usize, lines: usize) -> Option<bool> {
+        let (first, whole) = self.whole_window(lines)?;
+        Some(line >= first && line < first + whole)
+    }
+
+    /// The first whole line of the window and how many whole lines it
+    /// holds, from the list's last frame; `None` before it has drawn or
+    /// when the window holds less than a row.
+    fn whole_window(&self, lines: usize) -> Option<(usize, usize)> {
         let state = self.scroll.0.borrow();
         // The list's last frame: `item` is its window, `contents` all its
         // lines, which are one height.
@@ -177,7 +208,7 @@ impl TableState {
         let whole = ((view + 1.5) / row).floor() as usize;
         let scrolled = (-f32::from(state.base_handle.offset().y)).max(0.);
         let first = (scrolled / row - 0.01).ceil().max(0.) as usize;
-        (line >= first + whole).then(|| line + 1 - whole)
+        Some((first, whole))
     }
 
     /// Scrolls the table sideways so the column spanning `left..left +

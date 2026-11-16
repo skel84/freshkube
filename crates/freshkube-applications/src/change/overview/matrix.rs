@@ -18,8 +18,13 @@ use crate::ui::dp;
 pub const MATRIX: &str = "change-matrix";
 /// A step column's width, in dp: the widest word and its inset.
 const STEP_WIDTH: f32 = 112.;
-/// How many frames a selection's row is revealed in.
+/// How many frames a selection's row is revealed in at least: a stacked
+/// Inspector shrinks the matrix over a few.
 const REVEAL_FRAMES: usize = 6;
+/// How many frames it is revealed in at most, while it still doesn't show
+/// whole: a small window and a large text size leave the matrix a row and a
+/// half, and its height may settle later than the minimum.
+const REVEAL_MAX_FRAMES: usize = 40;
 /// The pinned Stage column's width, in dp.
 const STAGE_WIDTH: f32 = 220.;
 
@@ -79,8 +84,8 @@ pub struct Matrix {
     /// The selected cell's column, to scroll into view once the table has
     /// laid out.
     reveal: Option<Column>,
-    /// Frames left to reveal the selected Stage's row in: a stacked
-    /// Inspector shrinks the matrix over a few.
+    /// Frames left to reveal the selected Stage's row in, [`REVEAL_MAX_FRAMES`]
+    /// at the most.
     reveal_rows: usize,
 }
 
@@ -123,7 +128,11 @@ impl Matrix {
         }
         if self.selected != selected {
             self.reveal = selected.as_ref().and_then(|(_, column)| *column);
-            self.reveal_rows = if selected.is_some() { REVEAL_FRAMES } else { 0 };
+            self.reveal_rows = if selected.is_some() {
+                REVEAL_MAX_FRAMES
+            } else {
+                0
+            };
         }
         self.selected = selected;
         self.loading = loading;
@@ -132,6 +141,16 @@ impl Matrix {
     /// The cell ids, for tests and the page's key handling.
     pub fn cell_id(stage: &str, column: Column) -> SharedString {
         format!("change-cell-{stage}-{}", column.id()).into()
+    }
+
+    /// Whether the selected Stage's row is known not to show whole in the
+    /// list, as its last frame drew it. Not known (before it drew, or in a
+    /// list shorter than a row, which no reveal makes whole) is not a miss.
+    fn row_misses(&self) -> bool {
+        self.selected_key()
+            .and_then(|key| self.line_of(key))
+            .and_then(|line| self.table.shows_whole(line, self.rows.len()))
+            == Some(false)
     }
 
     /// Selects the hop a pressed cell stands for, on the page.
@@ -222,7 +241,15 @@ impl Render for Matrix {
         if self.reveal_rows > 0 {
             self.reveal_rows -= 1;
             kit::reveal(self, ScrollStrategy::Nearest);
-            window.on_next_frame(|window, _| window.refresh());
+            // Past the minimum, it goes on only while the list's last frame
+            // shows the row cut; the list's own frame is the only thing that
+            // knows.
+            let spent = REVEAL_MAX_FRAMES - self.reveal_rows;
+            if spent >= REVEAL_FRAMES && !self.row_misses() {
+                self.reveal_rows = 0;
+            } else {
+                window.on_next_frame(|window, _| window.refresh());
+            }
         }
         if let Some(column) = self.reveal {
             let at = Column::ALL

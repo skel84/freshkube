@@ -234,7 +234,12 @@ impl Element for Passing {
             return None;
         }
         let view = self.scroll.bounds();
+        // The run's edge, on a whole device pixel and never short of it:
+        // a clip a fraction of a pixel left of the pinned cells' edge lets
+        // a sliver of the passing cell's glyphs show there.
+        let scale = window.scale_factor();
         let left = (view.left() + self.inset + dp_px(self.run, window)).min(view.right());
+        let left = ((left * scale).ceil() / scale).min(view.right());
         let mut right = view.right();
         let mut shift = px(0.);
         if self.sticky {

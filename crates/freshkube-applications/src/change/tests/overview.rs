@@ -1,5 +1,6 @@
 //! The Overview: its strip, its matrix, and how they lay out (#823).
 use super::*;
+use crate::change::overview::Matrix;
 use crate::change::overview::cells::Column;
 use gpui_kit::Bounds;
 use gpui_kit::Pixels;
@@ -647,6 +648,141 @@ fn a_stage_row_under_the_matrix_header_is_cut_at_its_edge(cx: &mut TestAppContex
                 );
             }
         }
+    })
+    .unwrap();
+}
+
+/// The matrix at 760×560 and text 20 shows about a row and a half (#1080):
+/// arrowing down to the last Stage, right to the last column, and back,
+/// keeps the selected cell inside the matrix's visible bounds, below its
+/// header and right of the pinned Stage column. Each key waits for its
+/// frames, as a person's do. It proves where the reveal ends up, not how
+/// many frames it took, and the shapes differ in the Inspector's height
+/// under the matrix.
+#[gpui_kit::test]
+fn arrowing_to_the_last_cell_keeps_it_inside_the_matrix(cx: &mut TestAppContext) {
+    arrow_through(cx, Shape::Whole);
+}
+
+#[gpui_kit::test]
+fn arrowing_to_the_last_cell_keeps_it_inside_the_matrix_with_all_four_causes(
+    cx: &mut TestAppContext,
+) {
+    arrow_through(cx, Shape::Causes);
+}
+
+fn arrow_through(cx: &mut TestAppContext, shape: Shape) {
+    let (handle, page) = open_overview(cx, 760., 560., shape, Duration::ZERO, 20.);
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        page.update(cx, |page, cx| page.focus(window, cx));
+        let stages: Vec<_> = page
+            .read(cx)
+            .overview
+            .iter()
+            .map(|row| row.name.to_string())
+            .collect();
+        assert!(stages.len() >= 3, "{stages:?}");
+        let header = freshkube_ui::ui::dp_px(freshkube_ui::table::HEADER_HEIGHT, window);
+        let pinned = freshkube_ui::ui::dp_px(220., window);
+        let inside = |window: &Window, stage: &str, column: Column| {
+            let view = bounds(window, "change-matrix-table-scroll".into());
+            let cell = bounds(window, Matrix::cell_id(stage, column).to_string());
+            // The row's own 1 px borders either side are not part of a cell.
+            let (top, bottom) = (view.top() + header, view.bottom());
+            let left = view.left() + pinned;
+            assert!(
+                cell.top() >= top - px(1.) && cell.bottom() <= bottom + px(1.),
+                "{stage} {column:?}: {cell:?} not between {top:?} and {bottom:?}"
+            );
+            assert!(
+                cell.left() >= left - px(1.) && cell.right() <= view.right() + px(3.),
+                "{stage} {column:?}: {cell:?} not between {left:?} and {:?}",
+                view.right()
+            );
+        };
+        window.press("down", cx);
+        scroll_to_matrix(&page, window, cx);
+        // Down through every Stage, checking each one, then right through
+        // every column of the last, and back up and left.
+        for stage in &stages {
+            settle(window, cx);
+            inside(window, stage, Column::Eligible);
+            window.press("down", cx);
+        }
+        let last = stages.last().unwrap().clone();
+        for _ in 0..10 {
+            window.press("right", cx);
+            settle(window, cx);
+        }
+        settle(window, cx);
+        inside(window, &last, Column::AfterDeploy);
+        for _ in 1..stages.len() {
+            window.press("up", cx);
+            settle(window, cx);
+        }
+        for _ in 0..10 {
+            window.press("left", cx);
+            settle(window, cx);
+        }
+        settle(window, cx);
+        inside(window, &stages[0], Column::Eligible);
+    })
+    .unwrap();
+}
+
+/// A column scrolled under the pinned Stage column is cut at its right
+/// edge (#1081). Headless cannot read pixels, so this holds what the cut
+/// decides: a snapshot is `visible` only while some of it lies inside the
+/// content mask the table gives the passing cells. At 760×560 and text 20,
+/// scrolled to the last column, every cell and word that lies wholly under
+/// the pinned run is not visible, one that straddles its edge is, and none
+/// shows left of it. The mask's own pixel snapping is not readable here.
+#[gpui_kit::test]
+fn a_scrolled_column_is_cut_at_the_pinned_stage_columns_edge(cx: &mut TestAppContext) {
+    use gpui_kit::base::test_support::snapshots;
+    let (handle, page) = open_overview(cx, 760., 560., Shape::Whole, Duration::ZERO, 20.);
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        page.update(cx, |page, cx| page.focus(window, cx));
+        window.press("down", cx);
+        scroll_to_matrix(&page, window, cx);
+        for _ in 0..8 {
+            window.press("right", cx);
+            settle(window, cx);
+        }
+        let edge = bounds(window, "change-stage-dev".into()).right();
+        let (mut hidden, mut straddling) = (0, 0);
+        for line in snapshots(window) {
+            let Some(gpui_kit::ElementId::Name(name)) = line.path().last() else {
+                continue;
+            };
+            let passing = name.starts_with("change-cell-")
+                && (name.ends_with("-word") || name.matches('-').count() <= 3 + 1);
+            let list = bounds(window, "change-matrix-list".into());
+            let (top, bottom) = (line.bounds().top(), line.bounds().bottom());
+            if !passing || top < list.top() || bottom > list.bottom() {
+                continue;
+            }
+            let at = line.bounds();
+            if at.right() <= edge {
+                assert!(
+                    !line.visible(),
+                    "{name} shows left of the pinned edge: {at:?}"
+                );
+                hidden += 1;
+            } else if at.left() < edge && at.right() > edge + px(1.) {
+                assert!(
+                    line.visible(),
+                    "{name} straddles the edge and shows: {at:?}"
+                );
+                straddling += 1;
+            }
+        }
+        assert!(
+            hidden > 0 && straddling > 0,
+            "{hidden} hidden, {straddling} straddling"
+        );
     })
     .unwrap();
 }
