@@ -569,6 +569,11 @@ impl ChangePage {
                         .id(SharedString::from(format!("{}-words", step.id)))
                         .test_support()
                         .aria_label(step.words.clone())
+                        // Wrap inside the pane: a sentence wider than the
+                        // line goes to a line of its own and breaks at words,
+                        // never cut at the pane's edge.
+                        .max_w_full()
+                        .min_w_0()
                         .text_color(p.muted)
                         .child(step.words.clone()),
                 )

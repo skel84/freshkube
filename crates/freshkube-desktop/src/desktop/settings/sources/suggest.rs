@@ -307,7 +307,7 @@ impl SourcesList {
                         Some(namespace.clone()),
                         format!(
                             "Build namespace: suggested from {}\n{namespace} holds every \
-                             PipelineRun found; Accept sets delivery.build_namespace to it\nReads \
+                             PipelineRun found; Accept sets the build namespace to it\nReads \
                              delivery.build_namespace",
                             item.found_from
                         ),
@@ -329,7 +329,7 @@ impl SourcesList {
                             Some(template.clone()),
                             format!(
                                 "Build namespace: the template {} fits {} projects\n{}; \
-                                 Accept sets delivery.build_namespace to it\nReads \
+                                 Accept sets the build namespace to it\nReads \
                                  delivery.build_namespace",
                                 template,
                                 fits.len(),

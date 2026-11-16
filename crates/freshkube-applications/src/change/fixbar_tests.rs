@@ -638,3 +638,25 @@ fn a_headline_that_fits_has_no_tooltip(cx: &mut TestAppContext) {
     })
     .unwrap();
 }
+
+/// #1052's smoke: at the narrowest window and text size 20 the fix step's
+/// words wrap inside the pane instead of being cut mid-word at its edge.
+#[gpui_kit::test]
+fn the_fix_steps_words_wrap_inside_the_pane_at_the_narrowest_and_largest(cx: &mut TestAppContext) {
+    let (handle, page) = open(cx, 760., 560., Shape::Causes, Duration::ZERO, 20.);
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        page.update(cx, |page, cx| page.select("stage-argocd", window, cx));
+        window.render_frame(cx);
+        let words = window.find("change-fix-settings-words").bounds();
+        let pane = window.find("change-fix-steps").bounds();
+        assert!(
+            words.right() <= pane.right() + gpui_kit::px(1.),
+            "{words:?} runs past {pane:?}"
+        );
+        // It broke into more than one line: taller than a single line.
+        let line = crate::ui::dp_px(12.5, window) * 1.2;
+        assert!(words.size.height > line, "{words:?}");
+    })
+    .unwrap();
+}
