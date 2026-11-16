@@ -179,3 +179,26 @@ fn a_run_titles_its_commit_by_the_first_line_of_sha_title() {
     assert_eq!(run("One line").as_deref(), Some("One line"));
     assert_eq!(run(" \n\t\n"), None, "nothing but blank lines is no title");
 }
+
+#[test]
+fn a_rollouts_canary_steps_and_current_step_are_read() {
+    use super::rollouts::parse_rollout;
+    let rollout = |spec: serde_json::Value, status: serde_json::Value| {
+        parse_rollout(&serde_json::json!({
+            "metadata": {"name": "api", "namespace": "shop"},
+            "spec": spec, "status": status
+        }))
+        .unwrap()
+    };
+    let canary = rollout(
+        serde_json::json!({"strategy": {"canary": {"steps": [{"setWeight": 20}, {"pause": {}}, {"setWeight": 60}]}}}),
+        serde_json::json!({"currentStepIndex": 1}),
+    );
+    assert_eq!((canary.steps, canary.step_index), (Some(3), Some(1)));
+    // A Rollout with no canary steps lists none, and an unset index stays unset.
+    let plain = rollout(
+        serde_json::json!({"strategy": {"blueGreen": {}}}),
+        serde_json::json!({}),
+    );
+    assert_eq!((plain.steps, plain.step_index), (None, None));
+}

@@ -31,6 +31,11 @@ pub struct Rollout {
     pub containers: Vec<Container>,
     pub aborted: bool,
     pub paused: bool,
+    /// How many steps `spec.strategy.canary.steps` lists; `None` for a
+    /// Rollout with no canary steps (a rolling update or blue-green).
+    pub steps: Option<u32>,
+    /// `status.currentStepIndex`: the step the Rollout is on, from 0.
+    pub step_index: Option<u32>,
 }
 
 /// A container of a pod template: its name and its image, as written.
@@ -186,6 +191,14 @@ pub(crate) fn parse_rollout(value: &Value) -> Option<Rollout> {
         stable_hash: text(value, "/status/stableRS"),
         images: containers(value),
         containers: named_containers(value),
+        steps: value
+            .pointer("/spec/strategy/canary/steps")
+            .and_then(Value::as_array)
+            .map(|steps| u32::try_from(steps.len()).unwrap_or(u32::MAX)),
+        step_index: value
+            .pointer("/status/currentStepIndex")
+            .and_then(Value::as_u64)
+            .map(|index| u32::try_from(index).unwrap_or(u32::MAX)),
         aborted: value
             .pointer("/status/abort")
             .and_then(Value::as_bool)

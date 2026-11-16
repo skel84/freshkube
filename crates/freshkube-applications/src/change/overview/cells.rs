@@ -1,7 +1,7 @@
 //! The Overview matrix's rows and cells, derived from the change and the
 //! same rows All hops draws, when they change. One word and a glyph per
 //! cell; an unknown cell says its cause. Nothing here runs while drawing.
-use freshkube_delivery::change::{Eligible, Promotion};
+use freshkube_delivery::change::{Eligible, NextStep, Promotion};
 
 use super::*;
 
@@ -11,16 +11,18 @@ pub enum Column {
     Eligible,
     Promoted,
     Verified,
+    NextStep,
     Synced,
     Running,
     AfterDeploy,
 }
 
 impl Column {
-    pub const ALL: [Column; 6] = [
+    pub const ALL: [Column; 7] = [
         Self::Eligible,
         Self::Promoted,
         Self::Verified,
+        Self::NextStep,
         Self::Synced,
         Self::Running,
         Self::AfterDeploy,
@@ -32,6 +34,7 @@ impl Column {
             Self::Eligible => "Eligible",
             Self::Promoted => "Promoted",
             Self::Verified => "Verified",
+            Self::NextStep => "Next step",
             Self::Synced => "Synced",
             Self::Running => "Running",
             Self::AfterDeploy => "After deploy",
@@ -44,6 +47,7 @@ impl Column {
             Self::Eligible => "eligible",
             Self::Promoted => "promoted",
             Self::Verified => "verified",
+            Self::NextStep => "next-step",
             Self::Synced => "synced",
             Self::Running => "running",
             Self::AfterDeploy => "after-deploy",
@@ -56,6 +60,7 @@ impl Column {
             Self::Eligible => "Eligible",
             Self::Promoted => "Promoted",
             Self::Verified => "Verified",
+            Self::NextStep => "Done",
             Self::Synced => "Synced",
             Self::Running => "Running",
             Self::AfterDeploy => "Healthy",
@@ -104,7 +109,7 @@ pub struct StageRow {
     pub cluster: SharedString,
     /// The muted second line: since when, or what it still runs.
     pub line2: SharedString,
-    pub cells: [Cell; 6],
+    pub cells: [Cell; 7],
     /// The Stage's group in the change, where All hops folds it.
     pub group: usize,
     /// Every hop of the Stage, for the selection to find its row.
@@ -182,6 +187,7 @@ fn stage_row(change: &Change, rows: &[HopRow], ix: usize, stage: &Stage) -> Stag
         gate(Column::Eligible, "eligible"),
         gate(Column::Promoted, "promotion"),
         gate(Column::Verified, "verification"),
+        next_step_cell(kind("Argo Rollout", false), reached, stage),
         cell(
             Column::Synced,
             kind("Argo CD Application", false),
@@ -223,6 +229,55 @@ fn stage_row(change: &Change, rows: &[HopRow], ix: usize, stage: &Stage) -> Stag
         waiting: matches!(stage.promotion, Promotion::Waiting | Promotion::NotYet),
         at: kit::RailAt::Only,
         rail: [kit::Track::None; 2],
+    }
+}
+
+/// The Next step cell: where the Stage's Rollout is, from the hop the
+/// Rollout stands for when the change has one. A Rollout that couldn't be
+/// read says its cause, never blank; a Stage with none is a hairline.
+fn next_step_cell(row: Option<&HopRow>, reached: bool, stage: &Stage) -> Cell {
+    let next = &stage.next_step;
+    let hop = row.map(|row| row.key.clone());
+    let label = Column::NextStep.label();
+    let outline = |word: &str, tooltip: String| Cell {
+        tone: Tone::Outline,
+        word: word.to_owned().into(),
+        hop: hop.clone(),
+        reached: false,
+        link: None,
+        tooltip: tooltip.into(),
+    };
+    // A Stage that still runs other Freight says nothing of this change,
+    // unless what would say couldn't be read.
+    if !reached && !matches!(next, NextStep::Unknown { .. }) {
+        return outline(
+            "Not reached",
+            format!("{label}: {} still runs other Freight", stage.name),
+        );
+    }
+    match next {
+        NextStep::NotReached | NextStep::NoRollout => {
+            return outline(&next.word(), format!("{label}: {}", next.detail()));
+        }
+        _ => {}
+    }
+    let tone = match next {
+        NextStep::Done => Tone::Good,
+        NextStep::Step { .. } | NextStep::Paused { .. } => Tone::Info,
+        NextStep::Progressing => Tone::Waiting,
+        NextStep::Degraded { .. } => Tone::Warn,
+        NextStep::Aborted => Tone::Crit,
+        NextStep::Unknown { .. } | NextStep::NotReached | NextStep::NoRollout => Tone::Unknown,
+    };
+    Cell {
+        tone,
+        word: next.word().into(),
+        hop,
+        reached: true,
+        // The track is the confidence of the link into the Rollout, as for
+        // every cell with a link of its own.
+        link: row.and_then(|row| row.link),
+        tooltip: format!("{label}: {}", next.detail()).into(),
     }
 }
 
