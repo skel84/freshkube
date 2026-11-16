@@ -20,7 +20,7 @@ mod everyday_tests;
 mod fresh_tests;
 mod report;
 #[cfg(test)]
-mod stage_tests;
+pub(crate) mod stage_tests;
 #[cfg(test)]
 mod tests;
 
@@ -484,6 +484,8 @@ impl WriteFlow {
         let mut after = self.after.take();
         let flow = cx.entity().downgrade();
         let runner = self.request.runner.clone();
+        // The window's level as this send was confirmed under it.
+        let held_level = crate::mutation::level(cx);
         // Detached on purpose: it owns the ticket, so the slot is freed only
         // when the runner has really ended, whatever became of the page, the
         // dialog or the window.
@@ -519,13 +521,14 @@ impl WriteFlow {
             // is nothing to report.
             let again = matches!(done.status, Status::NotSent(NotSent::LevelChanged(_)));
             // A stricter level the send found in the setup file is also the
-            // window's, so the header shows it and the next dialog asks under
-            // it; the app's own read of the file stays pending meanwhile. The
-            // window's own level, not the status's: that can be a destination's.
+            // window's when the window's own cell is what got stricter, so
+            // the header shows it and the next dialog asks under it; the
+            // app's own read of the file stays pending meanwhile. A
+            // destination going stricter changes no level of this window.
             if matches!(done.status, Status::NotSent(NotSent::LevelChanged(_))) {
                 _ = cx.update(|_, cx| {
                     let own = crate::mutation::level_cell(cx);
-                    if runner.follows(&own) {
+                    if runner.follows(&own) && own.get() < held_level {
                         crate::mutation::raise_level(own.get(), cx);
                     }
                 });

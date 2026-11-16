@@ -18,7 +18,7 @@ use crate::mutation::set_protection;
 
 const NS: &str = "/apis/kargo.akuity.io/v1alpha1/namespaces/checkout";
 
-fn kargo() -> Cluster {
+pub(crate) fn kargo() -> Cluster {
     let object = |kind: &str, name: &str| {
         json!({"apiVersion": "kargo.akuity.io/v1alpha1", "kind": kind,
             "metadata": {"name": name, "namespace": "checkout",

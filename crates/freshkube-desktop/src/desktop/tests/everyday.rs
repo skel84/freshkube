@@ -1559,9 +1559,83 @@ fn safety_g28_a_delete_sends_nothing_when_the_file_went_read_only(cx: &mut TestA
     w.press_pod(cx);
     w.drive(cx, Duration::from_millis(500));
     assert!(w.present(cx, "write-confirm"));
-    w.edit_setup("core-fra", None);
+    w.edit_setup(
+        "core-fra",
+        Some(freshkube_core::write::Protection::ReadOnly),
+    );
     w.click(cx, "write-confirm");
     w.drive(cx, Duration::from_secs(8));
     assert!(w.real_deletes().is_empty());
     assert!(w.cluster.exists(fake::POD));
+}
+
+/// A Stage action pressed on the change page, through the shell's own
+/// `stage_act` (the fourth site that starts a write through a live runner),
+/// on the fake Kargo cluster, up to the point where its dialog asks.
+fn stage_dialog(cx: &mut TestAppContext) -> (World, crate::desktop::stage_acts::TestConnection) {
+    use crate::applications::{ActKind, KargoAt, StageAct};
+    let w = world_on(cx, "core-fra", crate::write_flow::stage_tests::kargo);
+    let connection = crate::desktop::stage_acts::connect_with(w.cluster.client.clone());
+    let change =
+        freshkube_delivery::change::example::for_stage("checkout", "prod-ams", chrono::Utc::now())
+            .unwrap();
+    let act = StageAct {
+        kind: ActKind::Promote,
+        stage: "prod-ams".into(),
+        change: Box::new(change),
+        kargo: KargoAt::Open,
+        kubeconfig: None,
+    };
+    cx.update_window(w.handle, |_, window, cx| {
+        w.view
+            .update(cx, |pilot, cx| pilot.stage_act(&act, window, cx))
+    })
+    .unwrap();
+    cx.run_until_parked();
+    w.drive(cx, Duration::from_millis(500));
+    assert!(w.present(cx, "write-confirm"), "the Promote dialog asks");
+    // The destination (prod-ams) is protected: its name is typed.
+    cx.update_window(w.handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("write-type-name", cx);
+        window.input("prod-ams", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    (w, connection)
+}
+
+/// The Stage action's dialog, a file edited to `read-only` while it is open,
+/// Confirm: nothing is sent to Kargo.
+#[gpui_kit::test]
+fn safety_g28_a_stage_action_through_the_shell_sends_nothing_when_the_file_went_read_only(
+    cx: &mut TestAppContext,
+) {
+    let (w, _connection) = stage_dialog(cx);
+    w.edit_setup(
+        "core-fra",
+        Some(freshkube_core::write::Protection::ReadOnly),
+    );
+    w.click(cx, "write-confirm");
+    w.drive(cx, Duration::from_secs(3));
+    assert!(w.cluster.writes().is_empty());
+}
+
+/// The destination going `read-only` in the file refuses the send too, and
+/// leaves the window's own level alone: the header is not raised for a
+/// cluster the window isn't on.
+#[gpui_kit::test]
+fn a_destination_that_went_read_only_sends_nothing_and_does_not_raise_the_windows_level(
+    cx: &mut TestAppContext,
+) {
+    let (w, _connection) = stage_dialog(cx);
+    let before = cx.read(crate::mutation::level);
+    w.edit_setup(
+        "prod-ams",
+        Some(freshkube_core::write::Protection::ReadOnly),
+    );
+    w.click(cx, "write-confirm");
+    w.drive(cx, Duration::from_secs(3));
+    assert!(w.cluster.writes().is_empty());
+    assert_eq!(cx.read(crate::mutation::level), before);
 }

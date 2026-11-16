@@ -262,9 +262,11 @@ Guarantee 28 extends this one: a file edited to `protected` while a dialog is op
 - `safety_g28_an_everyday_action_sends_nothing_when_the_file_went_read_only` (`crates/freshkube-desktop/src/desktop/tests/everyday.rs`)
 - `safety_g28_an_edit_of_the_yaml_sends_nothing_when_the_file_went_read_only` (`crates/freshkube-desktop/src/desktop/tests/everyday.rs`)
 - `safety_g28_a_delete_sends_nothing_when_the_file_went_read_only` (`crates/freshkube-desktop/src/desktop/tests/everyday.rs`)
+- `safety_g28_a_stage_action_through_the_shell_sends_nothing_when_the_file_went_read_only` (`crates/freshkube-desktop/src/desktop/tests/everyday.rs`)
 
 ## Known gaps
 
+- Guarantee 28: with no setup file (a legacy `workspace.json` user), an action's destination has no entry in a file, so its level is not re-read at send; it is held to the level the app holds. The cluster's own level is still read, by context.
 - Guarantee 3 is proved where the floor is resolved (`freshkube-core`'s `team`) and where Settings shows and offers levels. The team setup is still example data (nothing is fetched or saved), so no test can show a fetched floor holding down the level a write is sent under; that test joins the suite when it is.
 - Guarantee 6 says "never from an agent". The agent can't start an exec or a forward yet (its only tools are the four reads, proved under guarantee 8); a test that the agent never starts one joins the suite when the agent can reach the app (#908).
 - At the window's level the example runner sends nothing, so "no write reached the runner" in the link and search tests is read from the runner's scratch audit (`freshkube-example-audit`), which a write would add a line to. The fake cluster's request recorder is used where a runner is built on it (guarantees 1, 2 and 10).
