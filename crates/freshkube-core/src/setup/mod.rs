@@ -37,9 +37,9 @@ pub(crate) use validate::is_label_name;
 pub use migrate::{Kept, Outcome, migrate};
 pub use recovery::{Recovered, Row, RowReason, Warning, read, warning_words};
 pub use types::{
-    Coroot, DEFAULT_LABEL, Delivery, EntryCoroot, EntryMetrics, Evidence, Forward, GitHub,
-    GitHubToken, KeysJson, Metrics, MetricsService, Mode, Results, SignIn, Source, StageNaming,
-    Store, SupplyChain,
+    Coroot, DEFAULT_LABEL, Delivery, DeliveryApplication, EntryCoroot, EntryMetrics, Evidence,
+    Forward, GitHub, GitHubToken, KeysJson, Metrics, MetricsService, Mode, Results, SignIn, Source,
+    StageNaming, Store, SupplyChain, not_expected_in,
 };
 pub use validate::{plain_template, resolve_build_namespace};
 
@@ -100,6 +100,9 @@ impl std::fmt::Display for Place {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Fault {
     Empty(String),
+    /// A project or Stage name longer than 64 bytes or with a control
+    /// character, which would reach a banner; the value is never repeated.
+    BadName(String),
     NotUrl(String),
     NotHttpsUrl(String),
     /// Not a Kubernetes namespace name; the value is never repeated.
@@ -144,6 +147,9 @@ impl std::fmt::Display for Fault {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Fault::Empty(at) => write!(f, "{at} is empty"),
+            Fault::BadName(at) => {
+                write!(f, "{at} is longer than 64 bytes or has a control character")
+            }
             Fault::NotNamespace(at) => write!(f, "{at} isn’t a Kubernetes namespace name"),
             Fault::NotUrl(at) => write!(f, "{at} isn’t an http:// or https:// URL"),
             Fault::NotHttpsUrl(at) => {
@@ -332,6 +338,14 @@ impl Setup {
             }
             if let Some(github) = &delivery.github {
                 named(&mut keys, "delivery.github", &github.extra);
+            }
+            // By the project's name: recovery may have skipped rows before it.
+            for application in &delivery.applications {
+                named(
+                    &mut keys,
+                    &format!("delivery.applications[{}]", application.name),
+                    &application.extra,
+                );
             }
         }
         for entry in &self.workspace.clusters {

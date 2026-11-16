@@ -5,8 +5,8 @@
 use std::path::Path;
 
 use super::{
-    Coroot, Delivery, EntryCoroot, EntryMetrics, Fault, Metrics, Mode, Results, Source, Store,
-    SupplyChain, types::MetricsService,
+    Coroot, Delivery, DeliveryApplication, EntryCoroot, EntryMetrics, Fault, Metrics, Mode,
+    Results, Source, Store, SupplyChain, types::MetricsService,
 };
 use crate::{base_url::parse_base_url, workspace::Entry};
 
@@ -239,6 +239,22 @@ pub(super) fn delivery(delivery: &Delivery) -> Result<(), Fault> {
             non_empty(key, format!("{at}.project_key"))?;
         }
     }
+    for (index, application) in delivery.applications.iter().enumerate() {
+        application_fields(application, index)?;
+    }
+    Ok(())
+}
+
+/// One `delivery.applications` row on its own: a name, and no empty Stage.
+pub(super) fn application_fields(
+    application: &DeliveryApplication,
+    index: usize,
+) -> Result<(), Fault> {
+    let at = format!("delivery.applications[{index}]");
+    name_text(&application.name, format!("{at}.name"))?;
+    for (stage, name) in application.not_expected_in.iter().enumerate() {
+        name_text(name, format!("{at}.not_expected_in[{stage}]"))?;
+    }
     Ok(())
 }
 
@@ -276,6 +292,16 @@ fn namespace_name(text: &str, at: String) -> Result<(), Fault> {
     } else {
         Err(Fault::NotNamespace(at))
     }
+}
+
+/// A project or Stage name: not empty, at most 64 bytes, no control
+/// character, since it reaches banners and the unknown-keys line.
+fn name_text(text: &str, at: String) -> Result<(), Fault> {
+    non_empty(text, at.clone())?;
+    if text.len() > 64 || text.chars().any(char::is_control) {
+        return Err(Fault::BadName(at));
+    }
+    Ok(())
 }
 
 fn non_empty(text: &str, at: String) -> Result<(), Fault> {

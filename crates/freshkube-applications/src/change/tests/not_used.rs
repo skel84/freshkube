@@ -192,6 +192,10 @@ fn a_not_used_here_hop_explains_itself_with_nothing_to_fix(cx: &mut TestAppConte
             window.find("change-fix-cause").label(),
             Some("Not used here")
         );
+        // Said once: no Needs, no Fix, and a title that isn't the clock's.
+        assert!(window.try_find("change-fix-why").is_some());
+        assert!(window.try_find("change-fix-needs").is_none());
+        assert!(window.try_find("change-fix-steps").is_none());
         // Nothing to fix: none of the next steps' buttons is offered.
         for id in [
             "change-fix-kargo",
@@ -202,6 +206,130 @@ fn a_not_used_here_hop_explains_itself_with_nothing_to_fix(cx: &mut TestAppConte
         ] {
             assert!(window.try_find(id).is_none(), "{id}");
         }
+    })
+    .unwrap();
+}
+
+fn expect(page: &Entity<ChangePage>, window: &mut Window, cx: &mut App, stages: &[&str]) {
+    let applications = [freshkube_core::setup::DeliveryApplication::new(
+        "checkout", stages,
+    )];
+    page.update(cx, |page, cx| {
+        page.set_applications(&applications);
+        let raw = page.change.clone();
+        page.read_answer(raw, window, cx);
+    });
+    window.render_frame(cx);
+}
+
+fn words(page: &Entity<ChangePage>, cx: &App, stage: &str) -> Vec<String> {
+    let page = page.read(cx);
+    let row = page.overview.iter().find(|row| row.name == stage).unwrap();
+    row.cells.iter().map(|cell| cell.word.to_string()).collect()
+}
+
+#[gpui_kit::test]
+fn dont_expect_it_turns_a_stages_not_found_into_not_used_here(cx: &mut TestAppContext) {
+    let (handle, page) =
+        open_overview(cx, 1280., 880., Shape::ProdLonNotFound, Duration::ZERO, 13.);
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        let before = words(&page, cx, "prod-lon");
+        assert!(before.iter().any(|w| w == "Not found"), "{before:?}");
+        let fixes_before = page.read(cx).fixes.len();
+        let counts_before = page.read(cx).counts;
+        assert!(
+            page.read(cx)
+                .fixes
+                .iter()
+                .any(|fix| fix.hop.starts_with("prod-lon-")),
+            "Not found is something to fix until the setup says otherwise"
+        );
+
+        expect(&page, window, cx, &["prod-lon"]);
+        let after = words(&page, cx, "prod-lon");
+        assert!(!after.iter().any(|w| w == "Not found"), "{after:?}");
+        assert!(after.iter().any(|w| w == "Not used here"), "{after:?}");
+        let p = page.read(cx);
+        assert!(p.fixes.len() < fixes_before);
+        assert!(p.fixes.iter().all(|fix| !fix.hop.starts_with("prod-lon-")));
+        // prod-lon's verification failed, so its group counts as failing
+        // either way: Not used here changes no count it didn't earn.
+        assert_eq!(p.counts, counts_before);
+        assert!(p.not_expected_note.is_none());
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn a_listed_stage_stops_counting_as_unknown_in_the_chips(cx: &mut TestAppContext) {
+    // dev is fine in the default fixture. Make its Application and pods not
+    // found, so its group can't be confirmed, and then list the Stage.
+    let (handle, page) = overview_fixture(cx);
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        let before = page.read(cx).counts;
+        let mut change = page.read(cx).change.clone();
+        for hop in change
+            .hops
+            .iter_mut()
+            .filter(|hop| ["dev-argocd", "dev-pods"].contains(&hop.key.as_str()))
+        {
+            hop.state = HealthIndicator::Unknown;
+            hop.link = Some(Confidence::Unknown);
+            hop.cause = Some(Cause::not_found("an Application that deploys to dev"));
+        }
+        page.update(cx, |page, cx| page.read_answer(change, window, cx));
+        let unknown = page.read(cx).counts;
+        assert_eq!(unknown[3], before[3] + 1, "{unknown:?} from {before:?}");
+        assert_eq!(unknown[4], before[4] - 1, "the ok count drops by one");
+        let fixes = page.read(cx).fixes.len();
+        assert!(fixes >= 2);
+
+        expect(&page, window, cx, &["dev"]);
+        let p = page.read(cx);
+        assert_eq!(p.counts, before, "dev counts as it did before");
+        assert!(p.fixes.len() <= fixes - 2, "{:?}", p.fixes);
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn only_not_found_is_changed_and_an_unknown_stage_name_is_a_warning(cx: &mut TestAppContext) {
+    let (handle, page) = open_overview(cx, 1280., 880., Shape::Causes, Duration::ZERO, 13.);
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        let before: Vec<Vec<String>> = ["dev", "stage", "prod-ams", "prod-lon"]
+            .iter()
+            .map(|stage| words(&page, cx, stage))
+            .collect();
+        // The causes shape has Waiting, Can't read and Not set up on Stages:
+        // listing every Stage changes none of them. A name that is no Stage
+        // of the change warns beside the setup's own warning.
+        expect(
+            &page,
+            window,
+            cx,
+            &["dev", "stage", "prod-ams", "prod-lon", "prod-lan"],
+        );
+        let after: Vec<Vec<String>> = ["dev", "stage", "prod-ams", "prod-lon"]
+            .iter()
+            .map(|stage| words(&page, cx, stage))
+            .collect();
+        assert_eq!(after, before);
+        let p = page.read(cx);
+        let note = p.not_expected_note.as_deref().expect("a warning");
+        assert!(
+            note.contains("prod-lan") && note.contains("checkout"),
+            "{note}"
+        );
+        let (text, _) = p
+            .missing
+            .clone()
+            .expect("the banner of what may be missing");
+        assert!(text.contains("prod-lan"), "{text}");
+        // And it is only a warning: the page reads and shows as before.
+        assert!(!p.change.hops.is_empty());
     })
     .unwrap();
 }
@@ -223,6 +351,28 @@ fn a_not_used_hop_leaves_its_stage_group_where_it_was(cx: &mut TestAppContext) {
             .find(|group| group.label.as_ref() == "Stage dev")
             .unwrap();
         assert_eq!(dev.counts_as, Tone::Good);
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn after_deploy_of_a_deployment_that_was_not_found_has_no_coroot_verdict(cx: &mut TestAppContext) {
+    // prod-lon's Deployment wasn't found: Coroot has nothing to say of it,
+    // and the cell says why instead of a verdict it can't have.
+    let (handle, page) =
+        open_overview(cx, 1280., 880., Shape::ProdLonNotFound, Duration::ZERO, 13.);
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        let p = page.read(cx);
+        let lon = p
+            .overview
+            .iter()
+            .find(|row| row.name == "prod-lon")
+            .unwrap();
+        let after = &lon.cells[6];
+        assert_eq!(after.word.as_ref(), "Not found");
+        assert_ne!(after.tone, Tone::Good);
+        assert!(after.reached);
     })
     .unwrap();
 }
