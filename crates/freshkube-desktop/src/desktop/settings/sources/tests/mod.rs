@@ -19,6 +19,7 @@ use std::time::Duration;
 
 mod checks;
 mod configuration;
+mod history;
 mod inspector;
 mod layout;
 mod lifecycle;
