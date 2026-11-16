@@ -103,9 +103,16 @@ impl AlertsPage {
     fn render_state(&self, state: &State, cx: &mut Context<Self>) -> AnyElement {
         let prefix = self.which.slug();
         let retrying = self.loader.is_loading();
-        let actions = if state.retry {
+        let mut actions: Vec<AnyElement> = Vec::new();
+        if state.offers_settings() {
+            actions.push(freshkube_ui::read_state::open_settings_button_to(
+                "alerts-open-settings",
+                || Box::new(freshkube_ui::platform::OpenMonitoringSettings),
+            ));
+        }
+        if state.retry {
             let label = if retrying { "Retrying…" } else { "Retry" };
-            vec![
+            actions.push(
                 Button::new(SharedString::from(format!("{prefix}-retry")))
                     .primary()
                     .icon(ui::refresh_icon(retrying, cx))
@@ -114,10 +121,8 @@ impl AlertsPage {
                     .disabled(retrying)
                     .on_click(cx.listener(|this, _, _, cx| this.refresh(cx)))
                     .into_any_element(),
-            ]
-        } else {
-            Vec::new()
-        };
+            );
+        }
         let icon = match state.icon {
             StateIcon::Quiet => IconName::CircleCheck,
             StateIcon::Refused => IconName::ShieldX,
@@ -125,11 +130,18 @@ impl AlertsPage {
             StateIcon::Broken => IconName::CircleDashed,
             StateIcon::Filtered => IconName::Search,
         };
-        let view = ui::empty_state(
+        let details = state.detail.as_ref().map(ToString::to_string).map(|text| {
+            if state.detail_is_error() {
+                ui::EmptyDetails::Failure(text)
+            } else {
+                ui::EmptyDetails::Note(text)
+            }
+        });
+        let view = ui::empty_state_with(
             icon,
             state.title.clone(),
             state.description.clone(),
-            state.detail.as_ref().map(ToString::to_string),
+            details,
             actions,
             cx,
         );

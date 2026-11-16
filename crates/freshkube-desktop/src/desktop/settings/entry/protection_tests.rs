@@ -300,6 +300,33 @@ async fn the_table_shows_each_level_and_says_when_guarded_is_the_default(cx: &mu
                 .try_find("settings-cluster-prod-protection-default")
                 .is_none()
         );
+        // #1052: the note is whole, not "· defau…": its box holds the words
+        // shaped at the note's size.
+        let note = window
+            .find("settings-cluster-mgmt-protection-default")
+            .bounds();
+        let font = window.text_style().font();
+        let run = gpui_kit::TextRun {
+            len: "· default".len(),
+            font,
+            color: Default::default(),
+            background_color: None,
+            underline: None,
+            strikethrough: None,
+        };
+        let whole = window
+            .text_system()
+            .shape_line(
+                "· default".into(),
+                crate::ui::dp_px(12., window),
+                &[run],
+                None,
+            )
+            .width();
+        assert!(
+            whole <= note.size.width + gpui_kit::px(1.),
+            "the note is cut: {whole:?} in {note:?}"
+        );
         // The tag fits the row: 18 dp in a 26 dp row.
         let tag = window.find("settings-cluster-prod-protection").bounds();
         let row = window.find("settings-cluster-prod").bounds();

@@ -149,6 +149,12 @@ pub(crate) fn set_active_entry(entry: Option<String>, cx: &mut App) {
 /// read again (#1055), and whether the entries came from it. `None` has no
 /// file to read, as for example data.
 pub(crate) fn set_setup_file(file: Option<std::path::PathBuf>, from_file: bool, cx: &mut App) {
+    // A test that drives a live runner over a fake cluster has no preferences
+    // folder; its world installs a file for the shell to publish instead.
+    #[cfg(test)]
+    let (file, from_file) = TEST_SETUP
+        .with(|path| path.borrow().clone())
+        .map_or((file, from_file), |path| (Some(path), true));
     let global = cx.default_global::<GlobalProtection>();
     global.4 = file;
     global.6 = from_file;
@@ -182,11 +188,57 @@ pub(crate) fn send_guard(
     let window = global
         .and_then(|global| global.7.clone())
         .unwrap_or_else(|| context.to_owned());
-    let subject = match global.map(|global| (&global.3, global.6)) {
-        Some((Some(entry), true)) => Subject::Entry(entry.clone()),
-        _ => Subject::Context(window),
+    Some(match global.map(|global| (&global.3, global.6)) {
+        Some((Some(entry), true)) => SetupLevels::new(file, Subject::Entry(entry.clone())),
+        Some((_, false)) => SetupLevels::legacy(file, window),
+        _ => SetupLevels::new(file, Subject::Context(window)),
+    })
+}
+
+/// What a write runner reads again at its send step, for the cluster the
+/// runner writes to: the workspace entry `entry` when the setup file lists
+/// the entries and names it, else the kubeconfig context. When the runner
+/// follows the window's own cell (`own`), that context is the one the shell
+/// published with the level, the same as for a Talos write ([`send_guard`]);
+/// otherwise it is `context`, the runner's. Runners are for live clusters, so
+/// a window with no setup file gets a guard that can't say and its send
+/// refuses: no guard never means "send without reading".
+pub(crate) fn runner_guard(
+    entry: &str,
+    context: &str,
+    own: &LevelCell,
+    cx: &App,
+) -> freshkube_core::write::SetupLevels {
+    use freshkube_core::write::{SetupLevels, Subject};
+    let global = cx.try_global::<GlobalProtection>();
+    let Some(file) = global.and_then(|global| global.4.clone()) else {
+        return SetupLevels::unavailable(Subject::Context(context.to_owned()));
     };
-    Some(SetupLevels::new(file, subject))
+    let from_file = global.is_some_and(|global| global.6);
+    let window = global.is_some_and(|global| global.0.same(own));
+    let context = if window {
+        global
+            .and_then(|global| global.7.clone())
+            .unwrap_or_else(|| context.to_owned())
+    } else {
+        context.to_owned()
+    };
+    // Listed in the setup the shell published, not merely given a level cell
+    // (a cell is made for any entry the first time a write uses it).
+    let listed = from_file
+        && global.is_some_and(|global| {
+            global
+                .2
+                .as_ref()
+                .is_some_and(|(workspace, _)| workspace.clusters.iter().any(|e| e.id == entry))
+        });
+    if !from_file {
+        SetupLevels::legacy(file, context)
+    } else if listed {
+        SetupLevels::new(file, Subject::Entry(entry.to_owned()))
+    } else {
+        SetupLevels::new(file, Subject::Context(context))
+    }
 }
 
 /// The notice when the window went away while the setup file was read: a
@@ -488,6 +540,35 @@ pub(crate) fn write_audit_store() -> Option<freshkube_core::write::AuditStore> {
     crate::preferences_path()
         .and_then(|path| path.parent().map(|dir| dir.join("audit")))
         .map(freshkube_core::write::AuditStore::new)
+}
+
+#[cfg(test)]
+thread_local! {
+    /// The setup file a test's shell publishes for the send step to read
+    /// again, in place of the (absent) preferences folder's.
+    static TEST_SETUP: std::cell::RefCell<Option<std::path::PathBuf>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// Publishes `file` as this test's setup file, which the shell keeps
+/// publishing: tests that edit it write to the same path. The override ends
+/// when the returned guard is dropped.
+#[cfg(test)]
+pub(crate) fn setup_file_under(file: std::path::PathBuf, cx: &mut App) -> SetupFileOverride {
+    TEST_SETUP.with(|slot| *slot.borrow_mut() = Some(file.clone()));
+    set_setup_file(Some(file), true, cx);
+    SetupFileOverride
+}
+
+/// Ends [`setup_file_under`]'s override when dropped.
+#[cfg(test)]
+pub(crate) struct SetupFileOverride;
+
+#[cfg(test)]
+impl Drop for SetupFileOverride {
+    fn drop(&mut self) {
+        TEST_SETUP.with(|slot| *slot.borrow_mut() = None);
+    }
 }
 
 #[cfg(test)]
@@ -927,10 +1008,10 @@ impl TestSetup {
 mod tests {
     // Not `super::*`: gpui_kit's glob would shadow the built-in `#[test]`.
     use super::{
-        Protection, TestSetup, clear_level_floor, level, level_floor, moved_during_read,
-        raise_level, send_guard, set_protection, set_setup_file,
+        Protection, TestSetup, clear_level_floor, level, level_cell, level_floor,
+        moved_during_read, raise_level, runner_guard, send_guard, set_protection, set_setup_file,
     };
-    use freshkube_core::write::{Subject, Unreadable};
+    use freshkube_core::write::{LevelCell, Subject, Unreadable};
     use gpui_kit::TestAppContext;
 
     /// A live window with no setup file can't say, so its send refuses; only
@@ -993,6 +1074,74 @@ mod tests {
             );
             clear_level_floor(cx);
             assert_eq!(level_floor(cx), None);
+        });
+    }
+
+    /// The shell has published a setup that lists the entry `prod`.
+    fn publish_prod(cx: &mut gpui_kit::App) {
+        use freshkube_core::workspace::{Entry, Role, SourceRecovery, Workspace};
+        let mut workspace = Workspace::default();
+        workspace
+            .clusters
+            .push(Entry::new("prod", Role::Core, "prod-fra"));
+        super::set_workspace_levels(&workspace, &SourceRecovery::default(), cx);
+    }
+
+    /// A write runner reads the setup file at its send step too: with no file
+    /// it can't say and refuses; a listed entry is read by its id; a legacy
+    /// user is read by context and has no destinations to read; a runner that
+    /// follows the window's own cell reads the context the window shows.
+    #[gpui_kit::test]
+    fn safety_g28_a_runner_with_no_setup_file_refuses_and_a_legacy_user_is_read_by_context(
+        cx: &mut TestAppContext,
+    ) {
+        let other = LevelCell::new(Protection::Guarded);
+        cx.update(|cx| {
+            set_setup_file(None, false, cx);
+            let none = runner_guard("prod", "prod-fra", &other, cx);
+            assert_eq!(none.read(), Err(Unreadable::NotReadable));
+        });
+        let setup = TestSetup::new(Protection::Protected, cx);
+        cx.update(|cx| {
+            // `prod` is a workspace entry only once the shell has published the
+            // setup that lists it; until then the context names it.
+            let before = runner_guard("prod", "prod-fra", &other, cx);
+            assert_eq!(before.subject(), &Subject::Context("prod-fra".into()));
+            publish_prod(cx);
+            let listed = runner_guard("prod", "prod-fra", &other, cx);
+            assert_eq!(listed.subject(), &Subject::Entry("prod".into()));
+            assert_eq!(listed.read(), Ok(Protection::Protected));
+        });
+        drop(setup);
+        let _legacy = TestSetup::legacy(cx);
+        cx.update(|cx| {
+            publish_prod(cx);
+            let guard = runner_guard("prod", "prod-fra", &other, cx);
+            assert_eq!(guard.subject(), &Subject::Context("prod-fra".into()));
+            assert_eq!(guard.read(), Ok(Protection::Guarded));
+            // No entries in a file: a destination has nothing to be read from.
+            assert_eq!(
+                guard.read_with(&["prod-ams".into()]),
+                Ok((Protection::Guarded, vec![None]))
+            );
+        });
+    }
+
+    /// A runner that follows the window's own cell reads the context the
+    /// window shows, the same as a Talos write; another runner reads its own.
+    #[gpui_kit::test]
+    fn a_runner_following_the_windows_cell_reads_the_context_the_window_shows(
+        cx: &mut TestAppContext,
+    ) {
+        let _setup = TestSetup::by_context("display-ctx", Protection::ReadOnly, cx);
+        cx.update(|cx| {
+            let window = level_cell(cx);
+            let own = runner_guard("none", "talos-cluster", &window, cx);
+            assert_eq!(own.subject(), &Subject::Context("display-ctx".into()));
+            assert_eq!(own.read(), Ok(Protection::ReadOnly));
+            let elsewhere = LevelCell::new(Protection::Guarded);
+            let other = runner_guard("none", "talos-cluster", &elsewhere, cx);
+            assert_eq!(other.subject(), &Subject::Context("talos-cluster".into()));
         });
     }
 

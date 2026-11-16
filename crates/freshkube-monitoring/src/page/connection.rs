@@ -10,6 +10,7 @@ use freshkube_core::monitoring::{
     QueryError, Tried, cluster_client, confirm, confirm_url, discover, forget_after,
 };
 use freshkube_ui::read_state::ReadState;
+use freshkube_ui::ui::EmptyDetails;
 use gpui_kit::{Context, EntityId, SharedString, WeakEntity};
 
 use super::{MonitoringEvent, MonitoringPage, Read, ReadKind, Request};
@@ -67,8 +68,19 @@ pub(super) struct Missing {
     pub(super) confirming: Option<(PrometheusService, Request)>,
     /// What the empty state says, derived once with the answer.
     pub(super) state: ReadState,
-    /// What was looked for and tried, for the details box.
-    pub(super) details: String,
+}
+
+impl Missing {
+    /// The details box: what was looked for, and, when a candidate answered
+    /// with an error, each one's own words. It is a calm note only while
+    /// nothing answered with an error; any candidate's failure is an error.
+    pub(super) fn details(&self) -> EmptyDetails {
+        let looked = format!("Looked for {LOOKED_FOR}.");
+        match &self.tried {
+            Some(tried) => EmptyDetails::Failure(format!("{looked}\n{tried}")),
+            None => EmptyDetails::Note(looked),
+        }
+    }
 }
 
 /// Discovery found no Prometheus. Prometheus may run under a name
@@ -161,13 +173,6 @@ impl Connection {
             tried: tried_lines.clone().map(Into::into),
             confirming: None,
             state: not_found_state(cluster),
-            details: {
-                let mut details = format!("Looked for {LOOKED_FOR}.");
-                if let Some(tried) = &tried_lines {
-                    details = format!("{details}\n{tried}");
-                }
-                details
-            },
         })
     }
 }
@@ -742,5 +747,24 @@ mod read_state_tests {
         assert!(text.contains("Settings › Monitoring"), "{text}");
         assert!(text.contains("optional"), "{text}");
         assert!(!text.contains("freshkube.yaml"), "{text}");
+    }
+
+    #[test]
+    fn a_candidates_failure_is_an_error_and_no_answer_is_a_note() {
+        let missing = |tried: Option<&str>| Missing {
+            candidates: Vec::new(),
+            tried: tried.map(Into::into),
+            confirming: None,
+            state: not_found_state("prod-fra"),
+        };
+        assert!(matches!(missing(None).details(), EmptyDetails::Note(_)));
+        let failed = missing(Some("monitoring/prometheus: connection refused")).details();
+        match failed {
+            EmptyDetails::Failure(text) => {
+                assert!(text.starts_with("Looked for "), "{text}");
+                assert!(text.contains("connection refused"), "{text}");
+            }
+            other => panic!("{other:?}"),
+        }
     }
 }

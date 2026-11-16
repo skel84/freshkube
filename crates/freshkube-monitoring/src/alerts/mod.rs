@@ -657,6 +657,12 @@ async fn live(
 ) -> Result<Answer, QueryError> {
     let unread = |why: String| QueryError::new(ErrorKind::Unavailable, why);
     let connected = alerts::connect(access, host, scope, remembered).await;
+    // What a candidate that answered with an error said, to keep for a page
+    // that then finds nothing of its own.
+    let connect_reason = match &connected {
+        Err(Unknown::NotFound(reason)) if !reason.is_empty() => Some(reason.clone()),
+        _ => None,
+    };
     let found = match (&connected, which) {
         (Ok(found), _) => found.clone(),
         (Err(Unknown::Unread(why)), _) => return Err(unread(why.clone())),
@@ -682,13 +688,23 @@ async fn live(
             let own = cluster_client(access).await.ok();
             alerts::rules_page(&found.sources, scope, own.as_ref())
                 .await
-                .map(Data::Rules)
+                .map(|mut rules| {
+                    // Definitions with no evaluator because the evaluator
+                    // couldn't be read: say why, not that none exists.
+                    if !rules.evaluated {
+                        rules.unread = connect_reason.clone();
+                    }
+                    Data::Rules(rules)
+                })
         }
     };
     match data {
         Ok(data) => Ok(Answer::Read(data)),
         Err(Unknown::Unread(why)) => Err(unread(why)),
-        Err(unknown) => Ok(Answer::Unknown(unknown)),
+        Err(unknown) => Ok(Answer::Unknown(alerts::keep_reason(
+            unknown,
+            connect_reason.as_deref(),
+        ))),
     }
 }
 

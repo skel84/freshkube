@@ -167,11 +167,18 @@ impl Pilot {
         };
         let kubeconfigs = freshkube_core::resources::kubeconfig_sources(act.kubeconfig.as_deref());
         let name = kargo.entry.id.clone();
+        // A test hands back the fake cluster's client in place of a connection.
+        #[cfg(test)]
+        let test_client = TEST_CLIENT.with(|client| client.borrow().clone());
         let (job, receiver) = spawn_job(
             &runtime,
             CONNECT,
             "Kargo's cluster did not answer in time.".to_owned(),
             async move {
+                #[cfg(test)]
+                if let Some(client) = test_client {
+                    return Ok(client);
+                }
                 entry::connect_writer(kubeconfigs, kargo.entry)
                     .await
                     .map_err(|failure| failure.message)
@@ -185,7 +192,8 @@ impl Pilot {
                 .unwrap_or_else(|_| Err("Connecting stopped unexpectedly.".to_owned()));
             _ = this.update_in(cx, |this, window, cx| match connected {
                 Ok(client) => {
-                    let runner = Runner::new(client, audit, who).following(cell);
+                    let runner =
+                        crate::desktop::write_runner::live_runner(client, audit, who, cell, cx);
                     this.start_stage_write(Arc::new(runner), action, window, cx);
                 }
                 Err(why) => window.push_notification(
@@ -212,6 +220,32 @@ impl Pilot {
         };
         let flow = write_flow::start(request, window, cx);
         write_flow::retain(flow, cx);
+    }
+}
+
+#[cfg(test)]
+thread_local! {
+    /// The client a test's Stage action connects with, instead of Kargo's.
+    static TEST_CLIENT: std::cell::RefCell<Option<kube::Client>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// Makes this test's Stage actions connect with `client`; ends when the
+/// returned guard is dropped.
+#[cfg(test)]
+pub(super) fn connect_with(client: kube::Client) -> TestConnection {
+    TEST_CLIENT.with(|slot| *slot.borrow_mut() = Some(client));
+    TestConnection
+}
+
+/// Ends [`connect_with`]'s override when dropped.
+#[cfg(test)]
+pub(super) struct TestConnection;
+
+#[cfg(test)]
+impl Drop for TestConnection {
+    fn drop(&mut self) {
+        TEST_CLIENT.with(|slot| *slot.borrow_mut() = None);
     }
 }
 

@@ -213,7 +213,7 @@ impl Pilot {
                 }
                 match read {
                     Ok((client, subject)) => {
-                        let runner = Runner::new(client, audit, who).following(cell);
+                        let runner = crate::desktop::write_runner::live_runner(client, audit, who, cell, cx);
                         this.begin_everyday(Arc::new(runner), subject, kind, &identity, window, cx);
                     }
                     Err(why) => {

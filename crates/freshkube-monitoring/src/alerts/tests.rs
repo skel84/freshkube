@@ -272,6 +272,23 @@ fn what_was_not_read_is_never_no_alerts(cx: &mut TestAppContext) {
             shape != Shape::Refused,
             "{shape:?}"
         );
+        // The details are calm only where the read succeeded and found
+        // nothing; a refusal keeps the error style.
+        cx.read(|cx| match &page.read(cx).display().body {
+            Body::State(state) => assert_eq!(
+                state.detail_is_error(),
+                shape == Shape::Refused,
+                "{shape:?}"
+            ),
+            other => panic!("{other:?}"),
+        });
+        // Settings holds the fix where the source is looked for or the label
+        // named: the sentence there gets a button, not only the words.
+        assert_eq!(
+            shown(cx, handle, "alerts-open-settings"),
+            matches!(shape, Shape::NotFound | Shape::NoLabel),
+            "{shape:?}"
+        );
     }
     let (_runtime, handle, page) =
         mount(cx, Which::Alerts, Some(example_source("a")), Shape::Quiet);
@@ -582,6 +599,11 @@ fn a_failed_refresh_keeps_the_last_read_as_stale_and_a_first_failure_is_not_quie
     frame(cx, handle);
     assert!(shown(cx, handle, "alerts-failed"));
     assert!(!shown(cx, handle, "alerts-quiet"));
+    // A read that failed keeps the error style for its reason.
+    cx.read(|cx| match &page.read(cx).display().body {
+        Body::State(state) => assert!(state.detail_is_error() && state.detail.is_some()),
+        other => panic!("{other:?}"),
+    });
 }
 
 #[gpui_kit::test]
@@ -697,6 +719,7 @@ fn a_rule_group_is_good_only_when_every_rule_is_known_to_be_ok() {
             evaluated: true,
             read: Vec::new(),
             note: None,
+            unread: None,
         };
         super::display::derive(
             Which::Rules,
@@ -723,5 +746,162 @@ fn a_rule_group_is_good_only_when_every_rule_is_known_to_be_ok() {
             rule("b", RuleHealth::Error)
         ]),
         Tone::Crit
+    );
+}
+
+/// A not-found where a candidate answered with an error keeps the error style
+/// for its details; one where nothing answered is a calm note.
+#[test]
+fn a_not_found_with_a_candidates_error_keeps_the_error_style() {
+    use super::display::unknown_state;
+    use freshkube_core::monitoring::alerts::Unknown;
+    for which in [Which::Alerts, Which::Rules, Which::Silences] {
+        let calm = unknown_state(which, &Unknown::NotFound(String::new()));
+        assert!(!calm.detail_is_error(), "{which:?}: nothing answered");
+        let failed = unknown_state(
+            which,
+            &Unknown::NotFound("`monitoring/alertmanager` said: connection refused".into()),
+        );
+        assert!(failed.detail_is_error(), "{which:?}: a candidate's error");
+        assert!(
+            failed
+                .detail
+                .as_ref()
+                .is_some_and(|detail| detail.contains("connection refused"))
+        );
+    }
+    for unknown in [
+        Unknown::Refused("forbidden".into()),
+        Unknown::Unread("timed out".into()),
+    ] {
+        assert!(unknown_state(Which::Alerts, &unknown).detail_is_error());
+    }
+    for unknown in [
+        Unknown::NoClusterLabel("cluster".into()),
+        Unknown::RulesOnly,
+    ] {
+        assert!(!unknown_state(Which::Alerts, &unknown).detail_is_error());
+    }
+}
+
+/// Open Settings on Alerts asks for Monitoring's own section, not whichever
+/// section was shown last.
+#[gpui_kit::test]
+fn open_settings_on_alerts_asks_for_the_monitoring_section(cx: &mut TestAppContext) {
+    use freshkube_ui::platform::{OpenMonitoringSettings, OpenSettings};
+    use std::cell::Cell;
+    let monitoring = Rc::new(Cell::new(0));
+    let last_shown = Rc::new(Cell::new(0));
+    let (_runtime, handle, page) = mount(
+        cx,
+        Which::Alerts,
+        Some(example_source("a")),
+        Shape::NotFound,
+    );
+    cx.update(|cx| {
+        let monitoring = monitoring.clone();
+        cx.on_action(move |_: &OpenMonitoringSettings, _| monitoring.set(monitoring.get() + 1));
+        let last_shown = last_shown.clone();
+        cx.on_action(move |_: &OpenSettings, _| last_shown.set(last_shown.get() + 1));
+    });
+    show(cx, handle, &page);
+    assert!(shown(cx, handle, "alerts-open-settings"));
+    cx.update_window(handle, |_, window, cx| {
+        window.click("alerts-open-settings", cx)
+    })
+    .unwrap();
+    cx.run_until_parked();
+    assert_eq!((monitoring.get(), last_shown.get()), (1, 0));
+}
+
+/// Rules found as PrometheusRule objects with an evaluator that answered with
+/// an error (a Service that looks right but isn't one): the data keeps what it
+/// said (through `live()`, so `keep_reason` is wired in), and the page draws it
+/// as a warning in place of "nothing evaluates them". A refusal is its own
+/// page state already.
+#[test]
+fn rules_with_an_evaluator_that_failed_say_so() {
+    use crate::alerts::{Answer, Data};
+    use freshkube_core::monitoring::alerts::{Remembered, RulesData};
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    let _enter = runtime.enter();
+    let refused = Arc::new(AtomicU16::new(404));
+    let (client, _recorder) = fake_api::client(move |request| {
+        let path = request.path.as_str();
+        if path == "/api/v1/services" || path == "/api/v1/namespaces/monitoring/services" {
+            return Some(fake_api::json(
+                200,
+                json!({"kind": "ServiceList", "apiVersion": "v1", "metadata": {},
+                       "items": [service("alertmanager-operated", json!({"name": "web", "port": 9093}))]}),
+            ));
+        }
+        if path
+            .starts_with("/api/v1/namespaces/monitoring/services/alertmanager-operated:9093/proxy/")
+        {
+            return Some(fake_api::json(
+                refused.load(SeqCst),
+                json!({"message": "forbidden"}),
+            ));
+        }
+        if path == "/apis/monitoring.coreos.com/v1/prometheusrules" {
+            return Some(fake_api::json(
+                200,
+                json!({"kind": "PrometheusRuleList", "apiVersion": "monitoring.coreos.com/v1",
+                       "metadata": {},
+                       "items": [{"apiVersion": "monitoring.coreos.com/v1", "kind": "PrometheusRule",
+                                  "metadata": {"name": "app", "namespace": "monitoring"},
+                                  "spec": {"groups": [{"name": "errors", "rules": [
+                                      {"alert": "HighErrors", "expr": "up == 0"}]}]}}]}),
+            ));
+        }
+        None
+    });
+    let access = ClusterAccess::Live(Arc::new(InMemory(client)));
+    let answer = runtime.block_on(super::live(
+        Which::Rules,
+        &access,
+        None,
+        &Scope::Cluster,
+        &Remembered::default(),
+    ));
+    let rules = match answer {
+        Ok(Answer::Read(Data::Rules(rules))) => rules,
+        other => panic!("{other:?}"),
+    };
+    assert!(!rules.evaluated);
+    assert!(!rules.groups.is_empty(), "the definitions are still shown");
+    let reason = rules.unread.clone().expect("the refusal is kept");
+    assert!(reason.contains("said"), "{reason}");
+    let display = super::display::derive(
+        Which::Rules,
+        Some(&Answer::Read(Data::Rules(rules))),
+        None,
+        &super::display::Filter::default(),
+        None,
+        Utc::now(),
+    );
+    let ids: Vec<_> = display.notes.iter().map(|note| note.id).collect();
+    assert!(ids.contains(&"rules-unread"), "{ids:?}");
+    assert!(!ids.contains(&"rules-unevaluated"), "{ids:?}");
+    // With nothing refused, the old words stand.
+    let calm = RulesData {
+        groups: Vec::new(),
+        evaluated: false,
+        read: Vec::new(),
+        note: None,
+        unread: None,
+    };
+    let display = super::display::derive(
+        Which::Rules,
+        Some(&Answer::Read(Data::Rules(calm))),
+        None,
+        &super::display::Filter::default(),
+        None,
+        Utc::now(),
+    );
+    let ids: Vec<_> = display.notes.iter().map(|note| note.id).collect();
+    assert!(
+        ids.contains(&"rules-unevaluated") || display.rows.is_empty(),
+        "{ids:?}"
     );
 }

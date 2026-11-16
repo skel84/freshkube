@@ -337,7 +337,7 @@ fn example_data_answers_at_once_and_cannot_accept(cx: &mut TestAppContext) {
     .unwrap();
     assert_eq!(
         suggestion(&view, cx),
-        Some(("{project}".to_owned(), "Partial fit".to_owned()))
+        Some(("the project".to_owned(), "Partial fit".to_owned()))
     );
     cx.read(|cx| {
         assert!(view.read(cx).settings_page.read(cx).saving.is_none());
