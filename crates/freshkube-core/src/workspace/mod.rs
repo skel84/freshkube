@@ -312,9 +312,12 @@ impl Workspace {
 
     /// The level that applies to a kubeconfig context. The stricter of the
     /// entries naming it wins; a context no entry names is guarded, unless
-    /// a skipped row locked it ([`SourceRecovery::locked_level`]).
+    /// a skipped row locked it ([`SourceRecovery::locked_level`]). The team's
+    /// floor for the context comes last, and only as the stricter of it and
+    /// what the rest says, so it tightens and never loosens
+    /// ([`crate::team::TeamFloors::apply`]).
     pub fn level_of(&self, context: &str, recovery: &SourceRecovery) -> Protection {
-        recovery
+        let own = recovery
             .locked_level(context)
             .into_iter()
             .chain(
@@ -324,7 +327,8 @@ impl Workspace {
                     .map(Entry::level),
             )
             .reduce(Protection::stricter)
-            .unwrap_or_default()
+            .unwrap_or_default();
+        recovery.team_floors().apply(context, own)
     }
 
     /// An id for a new entry that no entry uses, from the context's name.

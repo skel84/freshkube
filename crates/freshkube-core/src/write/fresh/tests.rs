@@ -256,3 +256,133 @@ fn a_legacy_user_has_nothing_to_read_for_a_destination() {
         Err(Unreadable::Missing)
     );
 }
+
+// The team's floors reach the level a write is sent under (#849, slice 5C).
+mod team_floors {
+    use std::path::Path;
+
+    use super::*;
+    use crate::team::TeamFloors;
+    use crate::team::floors::tests::{TEAM as TEAM_FILE, applied, saved_text};
+
+    /// A setup file whose `prod` entry is `open` on `prod-ctx`, and the
+    /// team's file beside it.
+    fn directory_with(setup: &str) -> tempfile::TempDir {
+        let directory = tempfile::tempdir().unwrap();
+        std::fs::write(directory.path().join("freshkube.yaml"), setup).unwrap();
+        directory
+    }
+
+    fn levels(directory: &Path, subject: Subject) -> SetupLevels {
+        SetupLevels::new(directory.join("freshkube.yaml"), subject)
+    }
+
+    /// The team file of a team that holds `prod-ams` (read-only) on `ctx`.
+    fn team_holding(ctx: &str) -> String {
+        saved_text(&applied(TEAM_FILE, &[("prod-ams", ctx)]))
+    }
+
+    fn floors_holding(ctx: &str) -> TeamFloors {
+        TeamFloors::from_membership(&applied(TEAM_FILE, &[("prod-ams", ctx)]))
+    }
+
+    #[test]
+    fn safety_g32_a_team_floor_holds_the_level_a_write_is_sent_under() {
+        let directory = directory_with(&file_with(Protection::Open));
+        // The file says open and the window held open; the team holds the
+        // context read-only.
+        let open = levels(directory.path(), entry("prod"));
+        assert_eq!(open.read(), Ok(Protection::Open));
+        let held = open.with_team(floors_holding("prod-ctx"), None);
+        assert_eq!(held.read(), Ok(Protection::ReadOnly));
+        assert_eq!(
+            at_send(Protection::Open, held.read()),
+            Err(SendRefusal::Stricter(Protection::ReadOnly))
+        );
+        // A context subject, with no entry for it, is held too.
+        let by_context = levels(directory.path(), Subject::Context("elsewhere".into()))
+            .with_team(floors_holding("elsewhere"), None);
+        assert_eq!(by_context.read(), Ok(Protection::ReadOnly));
+    }
+
+    #[test]
+    fn safety_g32_a_floor_that_appears_while_the_dialog_is_open_stops_the_send() {
+        let directory = directory_with(&file_with(Protection::Open));
+        let team_file = directory.path().join("team.json");
+        // The dialog opened with no team: the window held no floor.
+        let at_opening = levels(directory.path(), entry("prod"))
+            .with_team(TeamFloors::none(), Some(team_file.clone()));
+        assert_eq!(at_opening.read(), Ok(Protection::Open));
+        // Joining and applying in Settings saved a team meanwhile.
+        std::fs::write(&team_file, team_holding("prod-ctx")).unwrap();
+        assert_eq!(at_opening.read(), Ok(Protection::ReadOnly));
+        assert_eq!(
+            at_send(Protection::Open, at_opening.read()),
+            Err(SendRefusal::Stricter(Protection::ReadOnly))
+        );
+    }
+
+    #[test]
+    fn safety_g32_a_floor_that_disappears_while_the_dialog_is_open_does_not_loosen_it() {
+        let directory = directory_with(&file_with(Protection::Open));
+        let team_file = directory.path().join("team.json");
+        std::fs::write(&team_file, team_holding("prod-ctx")).unwrap();
+        let at_opening = levels(directory.path(), entry("prod"))
+            .with_team(floors_holding("prod-ctx"), Some(team_file.clone()));
+        assert_eq!(at_opening.read(), Ok(Protection::ReadOnly));
+        // The person left the team meanwhile: what the dialog held stands.
+        std::fs::remove_file(&team_file).unwrap();
+        assert_eq!(at_opening.read(), Ok(Protection::ReadOnly));
+    }
+
+    #[test]
+    fn safety_g32_a_team_file_that_cannot_be_read_holds_every_context_read_only() {
+        let directory = directory_with(&file_with(Protection::Open));
+        let team_file = directory.path().join("team.json");
+        for text in [
+            "{ not json".to_string(),
+            r#"{"version":99,"membership":null}"#.to_string(),
+            {
+                // An address joining refuses is not taken up.
+                let mut value: serde_json::Value =
+                    serde_json::from_str(&team_holding("prod-ctx")).unwrap();
+                value["membership"]["source"]["address"] = "http://git.acme.example/x.git".into();
+                value.to_string()
+            },
+        ] {
+            std::fs::write(&team_file, text).unwrap();
+            for subject in [entry("prod"), Subject::Context("elsewhere".into())] {
+                let held = levels(directory.path(), subject)
+                    .with_team(TeamFloors::none(), Some(team_file.clone()));
+                assert_eq!(held.read(), Ok(Protection::ReadOnly));
+                assert_eq!(
+                    at_send(Protection::Open, held.read()),
+                    Err(SendRefusal::Stricter(Protection::ReadOnly))
+                );
+            }
+        }
+        // A missing file is no team: the file's own level.
+        std::fs::remove_file(&team_file).unwrap();
+        let held =
+            levels(directory.path(), entry("prod")).with_team(TeamFloors::none(), Some(team_file));
+        assert_eq!(held.read(), Ok(Protection::Open));
+    }
+
+    #[test]
+    fn safety_g32_a_floor_is_never_a_looser_level_than_the_file_says() {
+        // The setup file holds read-only; a team that holds the same context
+        // at protected does not move it up to protected.
+        let directory = directory_with(&file_with(Protection::ReadOnly));
+        let floors = TeamFloors::from_membership(&applied(TEAM_FILE, &[("stage-lon", "prod-ctx")]));
+        let held = levels(directory.path(), entry("prod")).with_team(floors, None);
+        assert_eq!(held.read(), Ok(Protection::ReadOnly));
+        // And the window's held level is never loosened by any of it.
+        for held_level in LEVELS {
+            let decided = at_send(held_level, held.read());
+            assert!(
+                matches!(decided, Ok(level) if level == held_level.stricter(Protection::ReadOnly))
+                    || decided == Err(SendRefusal::Stricter(Protection::ReadOnly))
+            );
+        }
+    }
+}

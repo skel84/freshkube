@@ -92,9 +92,32 @@ pub struct SourceRecovery {
     /// value that isn't one, with the level they keep until the file is
     /// fixed (#852).
     locked_contexts: Vec<(String, Protection)>,
+    /// What the team holds each context to (#849): not part of what the
+    /// setup file says, so [`Self::same_file_as`] leaves it out.
+    team_floors: crate::team::TeamFloors,
 }
 
 impl SourceRecovery {
+    /// Sets the team's floors, which [`Workspace::level_of`] combines with
+    /// the stricter level only.
+    ///
+    /// [`Workspace::level_of`]: super::Workspace::level_of
+    pub fn set_team_floors(&mut self, floors: crate::team::TeamFloors) {
+        self.team_floors = floors;
+    }
+
+    pub fn team_floors(&self) -> &crate::team::TeamFloors {
+        &self.team_floors
+    }
+
+    /// Whether the two say the same about the setup file, whatever the team's
+    /// floors are on either.
+    pub fn same_file_as(&self, other: &SourceRecovery) -> bool {
+        let mut mine = self.clone();
+        mine.team_floors = other.team_floors.clone();
+        mine == *other
+    }
+
     pub(crate) fn new(all_clusters_skipped: bool) -> Self {
         Self {
             all_clusters_skipped,

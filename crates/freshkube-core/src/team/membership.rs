@@ -81,7 +81,6 @@ impl Membership {
     pub fn from_saved(saved: SavedMembership) -> Result<Self, Unusable> {
         let source = saved.check()?;
         let applied = saved.applied.ok_or(Unusable::NoVersion)?;
-        let mapping = ContextMap::restore(&applied, &saved.mapping);
         let held = saved
             .held
             .into_iter()
@@ -93,7 +92,7 @@ impl Membership {
                 (id, level)
             })
             .collect();
-        Ok(Self {
+        let mut membership = Self {
             source,
             applied: Some(applied),
             applied_at: saved.applied_at,
@@ -102,8 +101,10 @@ impl Membership {
             overrides: saved.overrides,
             before_joining: saved.before_joining,
             held,
-            mapping,
-        })
+            mapping: ContextMap::default(),
+        };
+        membership.mapping = ContextMap::restore(membership.cluster_ids_in_play(), &saved.mapping);
+        Ok(membership)
     }
 
     /// Joins: remembers `overrides` as the copy to go back to.
@@ -247,8 +248,8 @@ impl Membership {
                     false
                 } else {
                     let new = self.pending.as_ref().map(|p| p.id()) != Some(version.id());
-                    self.mapping = ContextMap::for_version(&version, &self.mapping);
                     self.pending = Some(version);
+                    self.mapping = ContextMap::for_ids(self.cluster_ids_in_play(), &self.mapping);
                     new
                 }
             }
@@ -286,7 +287,26 @@ impl Membership {
         self.applied = Some(version);
         self.applied_at = Some(now);
         self.pending = None;
+        self.mapping = ContextMap::for_ids(self.cluster_ids_in_play(), &self.mapping);
         Ok(())
+    }
+
+    /// The clusters whose context a person has to have chosen for a floor to
+    /// hold: those the applied version names, those the waiting one names and
+    /// those whose floor is held. A waiting version, which nothing has
+    /// reviewed, can add a cluster to ask about; it can never take one away,
+    /// so a choice that holds a floor is not dropped until that version is
+    /// applied and the cluster is gone from it and from the held floors.
+    fn cluster_ids_in_play(&self) -> Vec<&str> {
+        let mut ids: BTreeSet<&str> = BTreeSet::new();
+        for version in [self.applied.as_ref(), self.pending.as_ref()]
+            .into_iter()
+            .flatten()
+        {
+            ids.extend(super::mapping::cluster_ids(version));
+        }
+        ids.extend(self.held.keys().map(String::as_str));
+        ids.into_iter().collect()
     }
 
     /// A version may only make a cluster's level stricter for the session:

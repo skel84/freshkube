@@ -1430,50 +1430,60 @@ fn a_newer_waiting_version_keeps_the_choices_for_clusters_it_still_names() {
 #[test]
 fn safety_g03_a_wrong_mapping_never_loosens_a_level() {
     // Which context a team cluster is mapped to, or none at all, is the
-    // person's choice and may be wrong. The floor belongs to the cluster the
-    // team names, so no choice can change the level a person ends up at.
+    // person's choice and may be wrong. A floor binds to the context chosen
+    // and is only combined with `stricter`, so whatever is chosen, no
+    // context ends up looser than it is without a team.
+    let setup = crate::setup::parse(
+        b"version: 1\nclusters:\n  - id: a\n    role: core\n    context: ctx-a\n    protection: open\n  - id: b\n    role: core\n    context: ctx-b\n  - id: u\n    role: core\n    context: unrelated\n    protection: open\n  - id: r\n    role: core\n    context: other\n    protection: read-only\n",
+    )
+    .unwrap();
+    let all = ["ctx-a", "ctx-b", "unrelated", "other", "not-in-the-setup"];
+    let mine = contexts(&all);
+    let without = |context: &str| {
+        setup
+            .workspace
+            .level_of(context, &crate::workspace::SourceRecovery::default())
+    };
+    let mut choices = vec![Choice::LeftOut];
+    choices.extend(all.iter().map(|c| Choice::Context(c.to_string())));
+    let mut tightened = false;
+    for first in &choices {
+        for second in &choices {
+            let mut m = Membership::join(source(), Overrides::new());
+            m.fetched(Ok(version("1", TEAM)), at(1));
+            m.map_context("cluster-a", first.clone(), &mine).unwrap();
+            m.map_context("cluster-b", second.clone(), &mine).unwrap();
+            let mut review = m.review().unwrap();
+            example::confirm_all(&mut review);
+            m.apply(review, at(2)).unwrap();
+            let mut recovery = crate::workspace::SourceRecovery::default();
+            recovery.set_team_floors(TeamFloors::from_membership(&m));
+            for context in all {
+                let level = setup.workspace.level_of(context, &recovery);
+                assert!(
+                    level <= without(context),
+                    "{first:?} / {second:?}: {context} went from {:?} to {level:?}",
+                    without(context)
+                );
+                tightened |= level < without(context);
+            }
+        }
+    }
+    // The property is not vacuous: a mapping does tighten a context.
+    assert!(tightened);
+    // And the right mapping holds ctx-a at the team's level.
     let mut m = Membership::join(source(), Overrides::new());
     m.fetched(Ok(version("1", TEAM)), at(1));
-    let ids: Vec<String> = m
-        .mapping()
-        .clusters()
-        .map(|(id, _)| id.to_string())
-        .collect();
-    assert!(!ids.is_empty());
-    let mine = contexts(&["unrelated", "other"]);
-    for id in &ids {
-        m.map_context(id, Choice::LeftOut, &mine).unwrap();
-    }
+    m.map_context("cluster-a", Choice::Context("ctx-a".into()), &mine)
+        .unwrap();
+    m.map_context("cluster-b", Choice::LeftOut, &mine).unwrap();
     let mut review = m.review().unwrap();
     example::confirm_all(&mut review);
     m.apply(review, at(2)).unwrap();
-    let team = m.team_values();
-    let held = |m: &Membership| {
-        ids.iter()
-            .map(|id| {
-                let view = cluster_view(id, &m.team_values(), m.overrides()).unwrap();
-                (view.allowed(), view.effective(Some(Protection::Open)))
-            })
-            .collect::<Vec<_>>()
-    };
-    let before = held(&m);
-    for choice in [
-        Choice::LeftOut,
-        Choice::Context("unrelated".into()),
-        Choice::Context("other".into()),
-    ] {
-        for id in &ids {
-            m.map_context(id, choice.clone(), &mine).unwrap();
-        }
-        assert_eq!(held(&m), before, "{choice:?}");
-        assert_eq!(m.team_values(), team);
-    }
-    // And the floor is what it was: open is held up to the team's level.
-    for id in &ids {
-        let floor = merge::floor(id, &team).unwrap();
-        let (level, _) = cluster_view(id, &team, m.overrides())
-            .unwrap()
-            .effective(Some(Protection::Open));
-        assert!(level >= floor, "{id}: {level:?} under {floor:?}");
-    }
+    let mut recovery = crate::workspace::SourceRecovery::default();
+    recovery.set_team_floors(TeamFloors::from_membership(&m));
+    assert_eq!(
+        setup.workspace.level_of("ctx-a", &recovery),
+        Protection::Protected
+    );
 }

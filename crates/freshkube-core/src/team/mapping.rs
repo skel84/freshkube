@@ -44,8 +44,14 @@ impl ContextMap {
     /// Every cluster `version` names, none chosen. A choice already made for
     /// a cluster that is still named is kept.
     pub fn for_version(version: &Version, before: &ContextMap) -> Self {
+        Self::for_ids(cluster_ids(version), before)
+    }
+
+    /// Each of `ids`, with the choice `before` held for it, if any.
+    pub fn for_ids<'a>(ids: impl IntoIterator<Item = &'a str>, before: &ContextMap) -> Self {
         Self {
-            clusters: cluster_ids(version)
+            clusters: ids
+                .into_iter()
                 .map(|id| {
                     let kept = before.clusters.get(id).cloned().flatten();
                     (id.to_string(), kept)
@@ -54,13 +60,17 @@ impl ContextMap {
         }
     }
 
-    /// What was saved: the clusters `version` names, with the choices kept
-    /// for them. A saved choice for a cluster the version no longer names is
-    /// dropped. A context is not checked against a kubeconfig here: the file
-    /// may name one that has since gone, and a mapping never loosens a level.
-    pub fn restore(version: &Version, chosen: &BTreeMap<String, Choice>) -> Self {
+    /// What was saved: each of `ids`, with the choice kept for it. A saved
+    /// choice for any other cluster is dropped. A context is not checked
+    /// against a kubeconfig here: the file may name one that has since gone,
+    /// and a mapping only ever tightens a level.
+    pub fn restore<'a>(
+        ids: impl IntoIterator<Item = &'a str>,
+        chosen: &BTreeMap<String, Choice>,
+    ) -> Self {
         Self {
-            clusters: cluster_ids(version)
+            clusters: ids
+                .into_iter()
                 .map(|id| (id.to_string(), chosen.get(id).cloned()))
                 .collect(),
         }

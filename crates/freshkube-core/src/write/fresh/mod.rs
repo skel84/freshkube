@@ -15,6 +15,7 @@
 use std::path::PathBuf;
 
 use super::Protection;
+use crate::team::TeamFloors;
 use crate::workspace::MAX_BYTES;
 use crate::{BoundedReadError, read_bounded_regular_file, setup};
 
@@ -81,6 +82,12 @@ pub struct SetupLevels {
     /// file. A legacy `workspace.json` user's entries came from the migration,
     /// so there is nothing in a file to read a destination's level from.
     destinations_listed: bool,
+    /// The team's floors the window held when the dialog opened (#849).
+    held_floors: TeamFloors,
+    /// The saved team, read again at the send step: a floor that appeared
+    /// since the dialog opened (a team joined and applied in Settings)
+    /// stops this send too.
+    team_file: Option<PathBuf>,
 }
 
 impl SetupLevels {
@@ -89,6 +96,27 @@ impl SetupLevels {
             file: Some(file.into()),
             subject,
             destinations_listed: true,
+            held_floors: TeamFloors::none(),
+            team_file: None,
+        }
+    }
+
+    /// The floors the team holds, as the window holds them now, and the file
+    /// they are saved in, which the send step reads again. The level a send
+    /// goes under is then the stricter of the setup file, the floors now
+    /// saved, the floors held at opening and the level the app holds; a team
+    /// file that can't be read holds every context `read-only`.
+    pub fn with_team(mut self, held: TeamFloors, file: Option<PathBuf>) -> Self {
+        self.held_floors = held;
+        self.team_file = file;
+        self
+    }
+
+    /// The floors a send is under: those held at opening and those saved now.
+    fn floors(&self) -> TeamFloors {
+        match &self.team_file {
+            Some(file) => self.held_floors.and(&TeamFloors::read(file)),
+            None => self.held_floors.clone(),
         }
     }
 
@@ -101,6 +129,8 @@ impl SetupLevels {
             file: Some(file.into()),
             subject: Subject::Context(context.into()),
             destinations_listed: false,
+            held_floors: TeamFloors::none(),
+            team_file: None,
         }
     }
 
@@ -111,6 +141,8 @@ impl SetupLevels {
             file: None,
             subject,
             destinations_listed: true,
+            held_floors: TeamFloors::none(),
+            team_file: None,
         }
     }
 
@@ -144,12 +176,13 @@ impl SetupLevels {
             Err(_) => return Err(Unreadable::NotReadable),
         };
         let parsed = Parsed::of(bytes.as_deref())?;
-        let own = parsed.level(&self.subject)?;
+        let floors = self.floors();
+        let own = parsed.level(&self.subject, &floors)?;
         let others = entries
             .iter()
             .map(|id| {
                 if self.destinations_listed {
-                    parsed.level(&Subject::Entry(id.clone())).map(Some)
+                    parsed.level(&Subject::Entry(id.clone()), &floors).map(Some)
                 } else {
                     Ok(None)
                 }
@@ -160,7 +193,7 @@ impl SetupLevels {
 
     /// [`Self::read`] on bytes already read; `None` is a missing file.
     pub fn level_in(&self, bytes: Option<&[u8]>) -> Result<Protection, Unreadable> {
-        Parsed::of(bytes)?.level(&self.subject)
+        Parsed::of(bytes)?.level(&self.subject, &self.floors())
     }
 }
 
@@ -180,15 +213,19 @@ impl Parsed {
         }
     }
 
-    fn level(&self, subject: &Subject) -> Result<Protection, Unreadable> {
+    fn level(&self, subject: &Subject, floors: &TeamFloors) -> Result<Protection, Unreadable> {
         let Parsed::File(recovered) = self else {
             return match subject {
-                // No file, no workspace: a context no entry names is guarded.
-                Subject::Context(_) => Ok(Protection::default()),
+                // No file, no workspace: a context no entry names is guarded,
+                // or what the team holds it to.
+                Subject::Context(context) => Ok(floors.apply(context, Protection::default())),
                 Subject::Entry(_) => Err(Unreadable::Missing),
             };
         };
-        let (workspace, recovery) = (&recovered.setup.workspace, &recovered.source_recovery);
+        let workspace = &recovered.setup.workspace;
+        let mut with_floors = recovered.source_recovery.clone();
+        with_floors.set_team_floors(floors.clone());
+        let recovery = &with_floors;
         match subject {
             Subject::Context(context) => Ok(workspace.level_of(context, recovery)),
             Subject::Entry(id) => {
