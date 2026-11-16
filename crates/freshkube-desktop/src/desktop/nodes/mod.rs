@@ -525,10 +525,8 @@ impl Pilot {
     pub(super) fn publish_reading(&mut self, cx: &mut Context<Self>) {
         // System services waits as long as the Talos overview has neither
         // answered nor failed, and says why when nothing can answer.
-        let failure = self
-            .config_error
-            .as_deref()
-            .or_else(|| self.overview.error().map(String::as_str));
+        let overview_error = self.overview.error().map(ToString::to_string);
+        let failure = self.config_error.as_deref().or(overview_error.as_deref());
         let reading = if !self.mode().has_talos() || self.overview.data().is_some() {
             Reading::Answered
         } else if let Some(failure) = failure {
@@ -578,6 +576,7 @@ impl Pilot {
         );
         let talos_current = self.overview.data().is_some() && !self.overview.is_stale();
         let loaded = kubernetes.is_some();
+        let overview_error = self.overview.error().map(ToString::to_string);
         let error: Option<SharedString> = self
             .switch
             .registry
@@ -594,7 +593,7 @@ impl Pilot {
                     .map(String::as_str)
             })
             .or(self.config_error.as_deref())
-            .or_else(|| self.overview.error().map(String::as_str))
+            .or(overview_error.as_deref())
             .map(|error| error.to_owned().into());
         let talos = self.mode().has_talos();
         self.pages.node_workspace.update(cx, |nodes, cx| {
@@ -642,9 +641,9 @@ impl Pilot {
             let reason = self
                 .overview
                 .error()
-                .map(String::as_str)
-                .unwrap_or("The refresh failed.");
-            display = display.talos_stale(reason.to_owned().into());
+                .map(ToString::to_string)
+                .unwrap_or_else(|| "The refresh failed.".into());
+            display = display.talos_stale(reason.into());
         }
         self.navigation.column_changed();
         let alerts = self.alert_state().cloned();

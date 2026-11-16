@@ -1,0 +1,1 @@
+- **Clearer words when no cluster is open or one can't be read:** with no cluster open, the Applications column says Freshkube hasn't looked for applications and offers Open Settings › Clusters. The status bar now tells "Not allowed to read the cluster" from "Couldn't reach the cluster" and "Couldn't read the cluster", by the kind of failure and never by its text.
