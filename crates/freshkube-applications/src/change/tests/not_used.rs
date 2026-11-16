@@ -192,6 +192,10 @@ fn a_not_used_here_hop_explains_itself_with_nothing_to_fix(cx: &mut TestAppConte
             window.find("change-fix-cause").label(),
             Some("Not used here")
         );
+        // Said once: no Needs, no Fix, and a title that isn't the clock's.
+        assert!(window.try_find("change-fix-why").is_some());
+        assert!(window.try_find("change-fix-needs").is_none());
+        assert!(window.try_find("change-fix-steps").is_none());
         // Nothing to fix: none of the next steps' buttons is offered.
         for id in [
             "change-fix-kargo",
@@ -347,6 +351,28 @@ fn a_not_used_hop_leaves_its_stage_group_where_it_was(cx: &mut TestAppContext) {
             .find(|group| group.label.as_ref() == "Stage dev")
             .unwrap();
         assert_eq!(dev.counts_as, Tone::Good);
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn after_deploy_of_a_deployment_that_was_not_found_has_no_coroot_verdict(cx: &mut TestAppContext) {
+    // prod-lon's Deployment wasn't found: Coroot has nothing to say of it,
+    // and the cell says why instead of a verdict it can't have.
+    let (handle, page) =
+        open_overview(cx, 1280., 880., Shape::ProdLonNotFound, Duration::ZERO, 13.);
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        let p = page.read(cx);
+        let lon = p
+            .overview
+            .iter()
+            .find(|row| row.name == "prod-lon")
+            .unwrap();
+        let after = &lon.cells[6];
+        assert_eq!(after.word.as_ref(), "Not found");
+        assert_ne!(after.tone, Tone::Good);
+        assert!(after.reached);
     })
     .unwrap();
 }

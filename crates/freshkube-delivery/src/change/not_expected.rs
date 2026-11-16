@@ -40,7 +40,7 @@ pub fn not_expected_in(change: &mut Change, stages: &[&str]) -> Vec<String> {
                 continue;
             }
             hop.cause = Some(cause.clone());
-            hop.detail = format!("Not used here: {} isn't expected in {name}", change.project);
+            hop.detail = format!("Not expected in {name}");
             if let Shows::Hop(detail) = &mut hop.shows {
                 detail.state = cause.word().into();
                 detail.notice = None;

@@ -1118,6 +1118,9 @@ fn not_found(change: &mut Change) {
         if let Shows::Hop(shown) = &mut hop.shows {
             shown.state = "Unknown".into();
             shown.notice = None;
+            // What was found is gone with it: no pods, no image.
+            shown.fields.clear();
+            shown.actions.clear();
             shown.link = Some(LinkDetail {
                 cause: Some(cause.clone()),
                 confidence: Confidence::Unknown,
