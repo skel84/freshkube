@@ -81,7 +81,7 @@ Read by: debug and stress builds. With `--fixture`, reshapes the Applications ex
 - `refused`: every source refused.
 - `rollback-none`: no Stage has an earlier Freight in its history, so Roll back… is greyed out and says so.
 - `rollback-unknown`: no earlier Freight of any Stage has a successful verification recorded, so the Roll back… lines offer a pick and never the main action, and the dialog says it isn't verified.
-- `rollouts`: the change page's Next step column shows each state: `dev` Done, `stage` Step 2 of 4, `prod-ams` No Rollout, and `prod-lon` Can't read (its Rollouts refused).
+- `rollouts`: the change page's Next step column shows each state: `dev` Done, `stage` Step 2 of 4, `prod-ams` Not used here (dim, no ring), and `prod-lon` Can't read (its Rollouts refused).
 - `single`: `core-fra` alone.
 - `spread`: Argo CD found in five namespaces with two past the cap.
 - `stages`: `checkout`'s Stages not answering.

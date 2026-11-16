@@ -8,7 +8,8 @@ use crate::rollouts::Rollout;
 /// A Stage's Next step.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum NextStep {
-    /// No Rollout is part of this Stage's chain: nothing to read.
+    /// No Rollout is part of this Stage's chain: nothing to read, and the
+    /// Next step is not used here.
     NoRollout,
     /// On step `at` (from 1) of `of`.
     Step {
@@ -70,7 +71,7 @@ impl NextStep {
     /// The cell's word: at most 14 characters.
     pub fn word(&self) -> String {
         match self {
-            Self::NoRollout => "No Rollout".into(),
+            Self::NoRollout => "Not used here".into(),
             Self::Step { at, of } => format!("Step {at} of {of}"),
             Self::Progressing => "Progressing".into(),
             Self::Paused { .. } => "Paused".into(),

@@ -53,7 +53,11 @@ fn the_overview_draws_the_strip_and_a_row_of_cells_per_stage(cx: &mut TestAppCon
         assert_eq!(stages, ["dev", "stage", "prod-ams", "prod-lon"]);
         for stage in &stages {
             assert!(window.find(format!("change-matrix-row-{stage}")).visible());
-            for column in Column::ALL {
+            let shown = crate::change::overview::cells::visible(page.read(cx).overview.iter());
+            // Next step is not used by any Stage here, so it is hidden.
+            assert!(!shown.contains(&Column::NextStep));
+            assert_eq!(shown.len(), Column::ALL.len() - 1);
+            for column in shown {
                 assert!(
                     window
                         .find(format!("change-cell-{stage}-{}", column.id()))
@@ -75,7 +79,7 @@ fn every_cell_says_one_word_and_its_cause(cx: &mut TestAppContext) {
             "Eligible",
             "Promoted",
             "Verified",
-            "No Rollout",
+            "Not used here",
             "Synced",
             "Running",
             "Not looked",
@@ -89,7 +93,7 @@ fn every_cell_says_one_word_and_its_cause(cx: &mut TestAppContext) {
                 "Eligible",
                 "Waiting",
                 "Waiting",
-                "No Rollout",
+                "Not used here",
                 "Not reached",
                 "Can't read",
                 "Not reached"
@@ -101,7 +105,7 @@ fn every_cell_says_one_word_and_its_cause(cx: &mut TestAppContext) {
                 "Approved",
                 "Promoted",
                 "Failed",
-                "No Rollout",
+                "Not used here",
                 "Synced",
                 "Running",
                 "Not looked"
@@ -228,7 +232,8 @@ fn assert_matrix_rows(cx: &mut TestAppContext, width: f32, height: f32, text: f3
         // before ended, its track fills it, and every track is one line.
         let mut y = None;
         let mut edge = None;
-        for column in Column::ALL {
+        let shown = crate::change::overview::cells::visible(page.read(cx).overview.iter());
+        for column in shown {
             let cell = bounds(window, format!("change-cell-dev-{}", column.id()));
             let track_in = bounds(window, format!("change-cell-dev-{}-track-in", column.id()));
             let track_out = bounds(window, format!("change-cell-dev-{}-track-out", column.id()));
@@ -637,7 +642,7 @@ fn the_rollouts_shape_fills_the_next_step_column_and_says_why_when_it_cant(
             (stage.word.as_ref(), stage.tone),
             ("Step 2 of 4", Tone::Info)
         );
-        assert_eq!(ams.word.as_ref(), "No Rollout");
+        assert_eq!(ams.word.as_ref(), "Not used here");
         assert_eq!(ams.track(), Track::Hairline);
         // A Rollout that couldn't be read says its cause, never blank, and
         // is no failure.

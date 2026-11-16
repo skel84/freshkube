@@ -77,6 +77,7 @@ fn reason(cause: &Cause, hop: &Hop) -> String {
                 .to_lowercase()
         ),
         Cause::Waiting { .. } => "waiting".to_owned(),
+        Cause::NotUsedHere { .. } => "not used here".to_owned(),
     }
 }
 

@@ -698,6 +698,8 @@ impl ChangePage {
             problem: cause.is_problem(),
             tone: if cause.is_problem() {
                 Tone::Unknown
+            } else if cause.is_not_used_here() {
+                Tone::Outline
             } else {
                 Tone::Waiting
             },

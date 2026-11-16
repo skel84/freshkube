@@ -152,7 +152,7 @@ fn join(end: Option<(&Hop, &HopRow)>) -> Join {
         .or(row.link)
         .unwrap_or(Confidence::Unknown);
     let cause = row.cause.as_ref();
-    let waiting = confidence == Confidence::Unknown && cause.is_some_and(|c| !c.is_problem());
+    let waiting = confidence == Confidence::Unknown && cause.is_some_and(|c| c.is_waiting());
     Join {
         hop: Some(row.key.clone()),
         track: match confidence {

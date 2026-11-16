@@ -1,7 +1,7 @@
 //! The Overview matrix's rows and cells, derived from the change and the
 //! same rows All hops draws, when they change. One word and a glyph per
 //! cell; an unknown cell says its cause. Nothing here runs while drawing.
-use freshkube_delivery::change::{Eligible, NextStep, Promotion};
+use freshkube_delivery::change::{Cause, Eligible, NextStep, Promotion};
 
 use super::*;
 
@@ -81,6 +81,10 @@ pub struct Cell {
     /// How sure the link into the hop is, when the hop has one (a gate and
     /// Coroot's verdict have none).
     pub link: Option<Confidence>,
+    /// The Stage isn't expected to have this step (Not used here): dim, no
+    /// track of its own, counted nowhere. A column where every Stage's cell
+    /// is not used is hidden ([`visible`]).
+    pub not_used: bool,
     pub tooltip: SharedString,
 }
 
@@ -154,7 +158,30 @@ pub fn derive(change: &Change, rows: &[HopRow]) -> Vec<StageRow> {
             into.get(ix + 1).copied().unwrap_or(kit::Track::None),
         ];
     }
+    // A hidden column has no cell to select or ring: its hops belong to
+    // their Stage's row.
+    let shown = visible(&stages);
+    for row in &mut stages {
+        for (column, cell) in Column::ALL.into_iter().zip(&mut row.cells) {
+            if !shown.contains(&column) {
+                cell.hop = None;
+            }
+        }
+    }
     stages
+}
+
+/// The columns the matrix draws: all of them, but one where every Stage's
+/// cell is Not used here, which is hidden (with no Stage at all, nothing is
+/// hidden, so the loading rows have every column).
+pub fn visible<'a>(rows: impl IntoIterator<Item = &'a StageRow> + Clone) -> Vec<Column> {
+    let none = rows.clone().into_iter().next().is_none();
+    Column::ALL
+        .into_iter()
+        .zip(0..)
+        .filter(|(_, at)| none || rows.clone().into_iter().any(|row| !row.cells[*at].not_used))
+        .map(|(column, _)| column)
+        .collect()
 }
 
 fn stage_row(change: &Change, rows: &[HopRow], ix: usize, stage: &Stage) -> StageRow {
@@ -238,35 +265,45 @@ fn stage_row(change: &Change, rows: &[HopRow], ix: usize, stage: &Stage) -> Stag
 fn next_step_cell(row: Option<&HopRow>, reached: bool, stage: &Stage) -> Cell {
     let next = &stage.next_step;
     let hop = row.map(|row| row.key.clone());
-    let (tone, reached_here) = match next {
-        NextStep::NoRollout => (Tone::Outline, false),
-        NextStep::Done => (Tone::Good, reached),
-        NextStep::Step { .. } | NextStep::Paused { .. } => (Tone::Info, reached),
-        NextStep::Progressing => (Tone::Waiting, reached),
-        NextStep::Aborted => (Tone::Crit, reached),
-        NextStep::Unknown { .. } => (Tone::Unknown, true),
-    };
-    let tooltip = match (reached_here, next) {
-        (false, NextStep::NoRollout) => format!("{}: {}", Column::NextStep.label(), next.detail()),
-        (false, _) => format!(
-            "{}: {} still runs other Freight",
-            Column::NextStep.label(),
-            stage.name
-        ),
-        _ => format!("{}: {}", Column::NextStep.label(), next.detail()),
-    };
-    let word = if !reached_here && !matches!(next, NextStep::NoRollout) {
-        "Not reached".to_owned()
-    } else {
-        next.word()
+    let label = Column::NextStep.label();
+    // A Stage with no Rollout isn't expected to have a next step.
+    if matches!(next, NextStep::NoRollout) {
+        return Cell {
+            tone: Tone::Outline,
+            word: next.word().into(),
+            hop,
+            reached: false,
+            link: None,
+            not_used: true,
+            tooltip: format!("{label}: {}", next.detail()).into(),
+        };
+    }
+    if !reached && !matches!(next, NextStep::Unknown { .. }) {
+        return Cell {
+            tone: Tone::Outline,
+            word: "Not reached".into(),
+            hop,
+            reached: false,
+            link: None,
+            not_used: false,
+            tooltip: format!("{label}: {} still runs other Freight", stage.name).into(),
+        };
+    }
+    let tone = match next {
+        NextStep::Done => Tone::Good,
+        NextStep::Step { .. } | NextStep::Paused { .. } => Tone::Info,
+        NextStep::Progressing => Tone::Waiting,
+        NextStep::Aborted => Tone::Crit,
+        NextStep::Unknown { .. } | NextStep::NoRollout => Tone::Unknown,
     };
     Cell {
-        tone: if reached_here { tone } else { Tone::Outline },
-        word: word.into(),
+        tone,
+        word: next.word().into(),
         hop,
-        reached: reached_here,
+        reached: true,
         link: None,
-        tooltip: tooltip.into(),
+        not_used: false,
+        tooltip: format!("{label}: {}", next.detail()).into(),
     }
 }
 
@@ -298,9 +335,27 @@ fn cell(column: Column, row: Option<&HopRow>, reached: bool, stage: &Stage) -> C
             hop: None,
             reached: false,
             link: None,
+            not_used: false,
             tooltip: format!("{}: the change hasn't got this far", column.label()).into(),
         };
     };
+    // A step the application isn't expected to have is dim and counted
+    // nowhere, whatever the Stage runs.
+    if row
+        .cause
+        .as_ref()
+        .is_some_and(|cause| cause.is_not_used_here())
+    {
+        return Cell {
+            tone: Tone::Outline,
+            word: Cause::not_used_here("").word().into(),
+            hop: Some(row.key.clone()),
+            reached: false,
+            link: None,
+            not_used: true,
+            tooltip: format!("{}: {}", column.label(), row.detail).into(),
+        };
+    }
     // A Stage that still runs other Freight says nothing of this change
     // downstream, unless something there couldn't be read or went wrong.
     let own = row.cause.is_some() || matches!(row.tone, Tone::Crit | Tone::Warn);
@@ -311,6 +366,7 @@ fn cell(column: Column, row: Option<&HopRow>, reached: bool, stage: &Stage) -> C
             hop: Some(row.key.clone()),
             reached: false,
             link: None,
+            not_used: false,
             tooltip: format!(
                 "{}: {} still runs other Freight",
                 column.label(),
@@ -344,6 +400,7 @@ fn cell(column: Column, row: Option<&HopRow>, reached: bool, stage: &Stage) -> C
         } else {
             row.link
         },
+        not_used: false,
         tooltip,
     }
 }

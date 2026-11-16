@@ -102,6 +102,10 @@ pub enum Cause {
     NotSetUp { needs: String, field: SettingsField },
     /// It looked, and the piece isn't there.
     NotFound { needs: String },
+    /// The application isn't expected to have this piece: not a problem and
+    /// not waiting, drawn dim, hidden when every Stage is the same, and
+    /// counted nowhere.
+    NotUsedHere { needs: String },
 }
 
 impl Cause {
@@ -113,6 +117,12 @@ impl Cause {
 
     pub fn not_found(needs: impl Into<String>) -> Self {
         Self::NotFound {
+            needs: needs.into(),
+        }
+    }
+
+    pub fn not_used_here(needs: impl Into<String>) -> Self {
+        Self::NotUsedHere {
             needs: needs.into(),
         }
     }
@@ -141,6 +151,7 @@ impl Cause {
             Self::CantRead { .. } => "Can't read",
             Self::NotSetUp { .. } => "Not set up",
             Self::NotFound { .. } => "Not found",
+            Self::NotUsedHere { .. } => "Not used here",
         }
     }
 
@@ -150,13 +161,25 @@ impl Cause {
             Self::Waiting { needs }
             | Self::CantRead { needs, .. }
             | Self::NotSetUp { needs, .. }
-            | Self::NotFound { needs } => needs,
+            | Self::NotFound { needs }
+            | Self::NotUsedHere { needs } => needs,
         }
     }
 
-    /// Waiting is no problem: it counts with neither warnings nor unknowns.
+    /// Waiting and Not used here are no problem: they count with neither
+    /// warnings nor unknowns.
     pub fn is_problem(&self) -> bool {
-        !matches!(self, Self::Waiting { .. })
+        !matches!(self, Self::Waiting { .. } | Self::NotUsedHere { .. })
+    }
+
+    /// Not reached yet, and nothing is wrong: the clock.
+    pub fn is_waiting(&self) -> bool {
+        matches!(self, Self::Waiting { .. })
+    }
+
+    /// Not expected here: drawn dim, never counted.
+    pub fn is_not_used_here(&self) -> bool {
+        matches!(self, Self::NotUsedHere { .. })
     }
 
     /// The steps it offers, in the order the page shows them.
@@ -171,6 +194,7 @@ impl Cause {
                 .collect(),
             Self::NotSetUp { field, .. } => vec![Next::OpenSettings(*field)],
             Self::NotFound { .. } => vec![Next::CheckSources],
+            Self::NotUsedHere { .. } => Vec::new(),
         }
     }
 }
@@ -208,6 +232,12 @@ mod tests {
             vec![Next::OpenSettings(SettingsField::BUILD_NAMESPACE)]
         );
         assert_eq!(Cause::not_found("a run").next(), vec![Next::CheckSources]);
+        // Not used here has nothing to fix, and is neither a problem nor
+        // the clock.
+        let unused = Cause::not_used_here("a Rollout");
+        assert!(unused.next().is_empty());
+        assert!(!unused.is_problem() && !unused.is_waiting());
+        assert_eq!(unused.word(), "Not used here");
     }
 
     #[test]
