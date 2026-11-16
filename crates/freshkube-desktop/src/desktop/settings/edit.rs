@@ -107,7 +107,7 @@ impl SettingsPage {
             "This takes the cluster out of freshkube.yaml. Nothing on the cluster, and \
              no kubeconfig or talosconfig, is touched.{body}"
         );
-        window.open_dialog(cx, move |dialog, window, _| {
+        freshkube_ui::dialog::open(window, cx, move |dialog, window, _| {
             let confirm_page = page.clone();
             let confirm_id = id.clone();
             freshkube_ui::dialog::frame(

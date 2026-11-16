@@ -397,7 +397,9 @@ forwarding the page's hide to `Watch::set_visible`.
   received lines rather than stopping it. The
   [dock](../crates/freshkube-desktop/src/desktop/dock/mod.rs) starts a restored
   tab only when first selected and shown, then keeps it reading while open on
-  any page, including when minimized. Closing, explicit Stop, or incompatible
+  any page, including when minimized. The saved tabs of other contexts are
+  parked: plain data with no connection, no read and no shell until their
+  context (and its entry) is the one shown, when they open idle (#1044). Closing, explicit Stop, or incompatible
   source replacement ends collection. Source paths are
   [`logs/talos`](../crates/freshkube-desktop/src/logs/talos/mod.rs),
   [`logs/pod`](../crates/freshkube-desktop/src/logs/pod/mod.rs),

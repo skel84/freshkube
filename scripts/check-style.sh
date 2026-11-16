@@ -36,6 +36,11 @@
 #             domain crates (core, talos-rs) and cfg(unix) file modes and
 #             paths are the OS's, not the app's look, and stay where they are.
 #
+# Outside freshkube-ui's dialog module, tests included, nothing may
+#   dialog  call window.open_dialog or open_alert_dialog: freshkube_ui::dialog::open places every
+#           dialog below the title bar's inset, where macOS draws its window
+#           buttons (#1062).
+#
 # Outside freshkube-ui's form module and tests, the shared components included,
 # nothing may
 #   label    draw a field label of its own: a fixed text (a literal or a bare
@@ -180,6 +185,13 @@ motion_offences() {
   '
 }
 
+dialog_offences() {
+  all_files | grep -v '^crates/freshkube-ui/src/dialog\.rs$' | xargs perl -CSD -ne '
+    print "dialog $ARGV:$.: ", s/^\s+//r if /\.open_(?:alert_)?dialog\s*\(/;
+    close ARGV if eof;
+  '
+}
+
 # Every Rust file the platform rule reads.
 platform_files() {
   find crates $(test -d src && echo src) \( -path 'src/*' -o -path '*/src/*' -o -name build.rs \) -name '*.rs' \
@@ -272,7 +284,7 @@ pending_list() {
 EOF
 }
 
-found="$(offences; motion_offences; platform_offences; form_offences)"
+found="$(offences; motion_offences; dialog_offences; platform_offences; form_offences)"
 if [ "$list" = 1 ]; then
   printf '%s\n' "$found" | sed '/^$/d'
   exit 0
@@ -303,6 +315,7 @@ if [ -n "$new" ]; then
   echo "Use the shared components (PageHeader, ui::status_glyph, the table) instead,"
   echo "give an icon-only button a tooltip, restrict a vertical scroll to its axis and"
   echo "animate through ui::motion, ask freshkube_ui::platform what differs by platform,"
+  echo "open dialogs with freshkube_ui::dialog::open,"
   echo "label fields with form::row and set out button pairs with form::actions;"
   echo "the allowlist and the pending list only shrink, so don't add to them."
 fi
