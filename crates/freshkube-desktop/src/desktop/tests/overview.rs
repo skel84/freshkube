@@ -85,6 +85,8 @@ fn fixture_stale_failure_retains_cards_until_refresh(cx: &mut TestAppContext) {
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
         assert!(view.read(cx).overview.is_stale());
+        // A failed read still draws the pane's frame around the page.
+        assert!(window.try_find("pane-frame").is_some());
         assert_eq!(
             window.find("overview-connection").label(),
             Some("Last read shown · latest read failed")

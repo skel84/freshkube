@@ -193,6 +193,12 @@ struct AlertsDrawn {
 }
 
 impl Nodes {
+    /// The pane this page draws in.
+    #[cfg(test)]
+    pub(super) fn pane(&self) -> &freshkube_ui::pane::Pane {
+        &self.pane
+    }
+
     /// The session's alert state, or none once the read stops.
     pub(super) fn set_alerts(
         &mut self,

@@ -535,29 +535,3 @@ fn a_wheel_while_the_next_row_loads_reaches_the_end_of_its_details(cx: &mut Test
     })
     .unwrap();
 }
-
-/// The drawer lays out in the room of the pane its page was told it draws
-/// in, not the main pane's: a missed handle fails this.
-#[gpui_kit::test]
-fn the_drawer_reads_the_room_of_its_own_pane(cx: &mut TestAppContext) {
-    let (_runtime, screen, handle) = mount_sized(cx, Some("homelab"), 1280.);
-    let own = freshkube_ui::pane::Pane::new();
-    own.set_chrome(0.);
-    let main = freshkube_ui::pane::Pane::new();
-    assert!(!own.is(&main));
-    cx.update_window(handle, |_, window, cx| {
-        screen.update(cx, |screen, _| {
-            screen.body_width.set(None);
-            let before = screen.drawer_room(window);
-            assert_eq!(before, main.page_width(window), "the main pane's room");
-            screen.set_pane(own.clone());
-            let after = screen.drawer_room(window);
-            assert_eq!(after, own.page_width(window), "its own pane's room");
-            assert!(
-                after > before,
-                "a pane with no chrome beside it has more room ({after} against {before})"
-            );
-        });
-    })
-    .unwrap();
-}

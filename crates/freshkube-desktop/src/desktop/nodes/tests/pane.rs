@@ -572,3 +572,40 @@ fn stepping_nodes_while_expanded_keeps_the_heading_in_view(cx: &mut TestAppConte
     })
     .unwrap();
 }
+
+/// What Nodes writes (the inspector's width) and what its embedded screens
+/// read are one handle: the shell's. A parent that built a child with a
+/// pane of its own would fail here.
+#[gpui_kit::test]
+fn the_node_panes_children_hold_the_shells_pane(cx: &mut TestAppContext) {
+    use crate::desktop::PageId;
+    use crate::screens::{DiagnosticsScreen, NetworkScreen, ProcessesScreen, StorageScreen};
+    let (_runtime, _handle, pilot) = fixture(cx, 1500., 880.);
+    cx.update(|cx| {
+        let pilot = pilot.read(cx);
+        let room = pilot.pane_room();
+        let nodes = pilot.pages.node_workspace.read(cx);
+        assert!(nodes.pane().is(&room), "Nodes writes the shell's pane");
+        assert!(nodes.pods.read(cx).pane().is(&room), "its pods list");
+        assert!(nodes.services.read(cx).pane().is(&room), "its services");
+        // The writer sets it; the embedded screens read it from the same one.
+        room.set_node_pane(321.);
+        macro_rules! reads_it {
+            ($page:expr, $screen:ty) => {{
+                let screen = pilot.pages.map[&$page]
+                    .view()
+                    .downcast::<$screen>()
+                    .unwrap_or_else(|_| {
+                        panic!("{} is a {}", stringify!($page), stringify!($screen))
+                    });
+                assert!(screen.read(cx).pane().is(&room), "{}", stringify!($page));
+                assert_eq!(screen.read(cx).pane().node_pane(), 321.);
+            }};
+        }
+        reads_it!(PageId::Processes, ProcessesScreen);
+        reads_it!(PageId::Storage, StorageScreen);
+        reads_it!(PageId::Network, NetworkScreen);
+        reads_it!(PageId::Diagnostics, DiagnosticsScreen);
+        room.set_node_pane(f32::MAX);
+    });
+}

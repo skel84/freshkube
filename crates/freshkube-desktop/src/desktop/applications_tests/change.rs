@@ -2476,7 +2476,7 @@ fn banners_show_whole_when_the_window_has_room(cx: &mut TestAppContext) {
 /// room the table's header and two rows leave them, more than their floor.
 #[gpui_kit::test]
 fn banners_use_the_room_the_trail_leaves_at_the_default_text_size(cx: &mut TestAppContext) {
-    let (_runtime, handle, _view) = on_stage_of(cx, 760., 560., Variant::GitHubLimited);
+    let (_runtime, handle, view) = on_stage_of(cx, 760., 560., Variant::GitHubLimited);
     cx.update_window(handle, |_, window, cx| {
         window.press("f", cx);
         window.render_frame(cx);
@@ -2491,7 +2491,7 @@ fn banners_use_the_room_the_trail_leaves_at_the_default_text_size(cx: &mut TestA
             }
         }
         window.render_frame(cx);
-        assert!(_view.read(cx).pane_room().is_short(window));
+        assert!(view.read(cx).pane_room().is_short(window));
         let notes = window.find("change-notes").bounds();
         let table = window.find("change-table-scroll").bounds();
         let status = window.find("status-bar").bounds();
@@ -2769,4 +2769,22 @@ fn the_stage_actions_work_from_the_overview(cx: &mut TestAppContext) {
         found(cx, handle, "write-type-prompt").as_deref(),
         Some("Type prod-ams to confirm")
     );
+}
+
+/// The applications page hands its pane to the change page it opens, so
+/// what the shell sets on its pane is what the change page lays out by.
+#[gpui_kit::test]
+fn the_change_page_draws_in_the_shells_pane(cx: &mut TestAppContext) {
+    let (_runtime, _handle, view) = open(cx, 1280., 880.);
+    cx.update(|cx| {
+        let room = view.read(cx).pane_room();
+        let applications = list(&view, cx);
+        assert!(applications.read(cx).pane().is(&room), "the page");
+        let change = applications
+            .read(cx)
+            .change_page()
+            .cloned()
+            .expect("a change");
+        assert!(change.read(cx).pane().is(&room), "the change page");
+    });
 }

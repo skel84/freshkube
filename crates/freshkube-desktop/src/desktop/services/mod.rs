@@ -144,6 +144,12 @@ pub(super) struct NodeServices {
 impl EventEmitter<NodeServicesEvent> for NodeServices {}
 
 impl NodeServices {
+    /// The pane this page draws in.
+    #[cfg(test)]
+    pub(in crate::desktop) fn pane(&self) -> &freshkube_ui::pane::Pane {
+        &self.pane
+    }
+
     pub(super) fn new(
         pane: freshkube_ui::pane::Pane,
         window: &mut Window,

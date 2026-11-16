@@ -309,6 +309,12 @@ pub(crate) struct NetworkScreen {
 impl EventEmitter<ScreenEvent> for NetworkScreen {}
 
 impl NetworkScreen {
+    /// The pane this page draws in.
+    #[cfg(test)]
+    pub(crate) fn pane(&self) -> &freshkube_ui::pane::Pane {
+        &self.pane
+    }
+
     pub(crate) fn new(
         pane: freshkube_ui::pane::Pane,
         runtime: Handle,

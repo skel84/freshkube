@@ -192,6 +192,11 @@ pub struct ApplicationPage {
 impl EventEmitter<ApplicationEvent> for ApplicationPage {}
 
 impl ApplicationPage {
+    /// The pane this page draws in.
+    pub fn pane(&self) -> &freshkube_ui::pane::Pane {
+        &self.pane
+    }
+
     pub(super) fn new(
         pane: freshkube_ui::pane::Pane,
         app: &Application,

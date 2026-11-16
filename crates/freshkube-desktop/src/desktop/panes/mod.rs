@@ -13,8 +13,10 @@ use freshkube_ui::pane::Pane;
 use gpui_kit::prelude::*;
 use gpui_kit::{AnyElement, ElementId, IntoElement, TestSupportExt, div};
 
-/// The key context of a pane's frame.
-pub(super) const PANE_CONTEXT: &str = "Pane";
+/// The key context of a pane's frame. Not `Pane`: that is one of GPUI's
+/// menu-bar default contexts on macOS, so a binding under it could fire from
+/// anywhere.
+pub(super) const PANE_CONTEXT: &str = "PaneFrame";
 
 /// Which pane: 0 is the first, and until there is a split the only one.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -58,7 +60,10 @@ impl Panes {
         }
     }
 
-    /// The room of the focused pane, which the shell's chrome sets.
+    /// The room of the focused pane, which the shell's chrome sets. With two
+    /// panes this is no longer one answer: the dock's height belongs to the
+    /// window and the chrome to the leftmost pane, not the focused one, and
+    /// slice C decides which setter reads which.
     pub(super) fn room(&self) -> Pane {
         self.slots
             .iter()
@@ -70,7 +75,7 @@ impl Panes {
     /// The frame of the first pane around `page`, drawn in every state.
     pub(super) fn frame(&self, page: AnyElement) -> impl IntoElement {
         div()
-            .id(PaneId::FIRST.id("pane"))
+            .id(PaneId::FIRST.id("pane-frame"))
             .test_support()
             .key_context(PANE_CONTEXT)
             .size_full()

@@ -139,6 +139,11 @@ pub struct WaitingPage {
 }
 
 impl WaitingPage {
+    /// The pane this page draws in.
+    pub fn pane(&self) -> &freshkube_ui::pane::Pane {
+        &self.pane
+    }
+
     pub(crate) fn new(
         pane: freshkube_ui::pane::Pane,
         runtime: tokio::runtime::Handle,

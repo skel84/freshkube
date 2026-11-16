@@ -420,6 +420,11 @@ impl EventEmitter<StageAct> for ApplicationsPage {}
 impl EventEmitter<crate::observability::RevisionLink> for ApplicationsPage {}
 
 impl ApplicationsPage {
+    /// The pane this page draws in.
+    pub fn pane(&self) -> &freshkube_ui::pane::Pane {
+        &self.pane
+    }
+
     pub fn new(
         pane: freshkube_ui::pane::Pane,
         runtime: tokio::runtime::Handle,

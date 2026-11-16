@@ -495,6 +495,11 @@ pub struct ChangePage {
 impl EventEmitter<ChangeEvent> for ChangePage {}
 
 impl ChangePage {
+    /// The pane this page draws in.
+    pub fn pane(&self) -> &freshkube_ui::pane::Pane {
+        &self.pane
+    }
+
     /// The page on `stage`, reading the change `fetch` names at once
     /// when it is `visible`, else once it shows.
     pub(super) fn new(

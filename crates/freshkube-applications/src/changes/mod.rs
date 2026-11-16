@@ -177,6 +177,11 @@ pub struct ChangesPage {
 impl EventEmitter<ChangesEvent> for ChangesPage {}
 
 impl ChangesPage {
+    /// The pane this page draws in.
+    pub fn pane(&self) -> &freshkube_ui::pane::Pane {
+        &self.pane
+    }
+
     pub(crate) fn new(
         pane: freshkube_ui::pane::Pane,
         runtime: tokio::runtime::Handle,
