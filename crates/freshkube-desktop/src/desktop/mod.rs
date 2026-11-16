@@ -837,6 +837,7 @@ impl Pilot {
         self.start_crash_log(&debug, &runtime, window, cx);
         self.tell_settings_files(window, cx);
         self.start_wake_watch(window, cx);
+        self.start_network_watch(window, cx);
         // A link given at launch, and every one the operating system opens
         // us with after it, opens once the window has settled and has a
         // cluster to read.
