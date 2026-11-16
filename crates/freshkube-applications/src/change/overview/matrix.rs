@@ -339,6 +339,7 @@ impl TableSource for Matrix {
                 tooltip: cell.tooltip.clone(),
                 selected,
                 ring: selected && self.ring,
+                muted: cell.not_used,
             },
             cx,
         )

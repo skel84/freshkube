@@ -136,6 +136,7 @@ fn object(cluster: &str, group: &str, kind: &str, namespace: &str, name: &str) -
         "Pod" => ("v1", "pods"),
         "Freight" => (VERSION, "freights"),
         "Stage" => (VERSION, "stages"),
+        "Rollout" => ("v1alpha1", "rollouts"),
         _ => (VERSION, "applications"),
     };
     Object {
@@ -1099,13 +1100,71 @@ fn rollback_shape(change: &mut Change, none: bool) {
 
 /// [`Shape::Rollouts`]: what the Next step column says for each Stage.
 fn rollouts(change: &mut Change) {
-    for stage in &mut change.stages {
+    for ix in 0..change.stages.len() {
+        let stage = &mut change.stages[ix];
         stage.next_step = match stage.name.as_str() {
             "dev" => NextStep::Done,
             "stage" => NextStep::Step { at: 2, of: 4 },
             "prod-lon" => NextStep::NoRollout,
             _ => NextStep::NotReached,
         };
+        let (name, cluster) = (
+            stage.name.clone(),
+            stage.cluster.cluster().map(str::to_owned),
+        );
+        let words = stage.next_step.word();
+        let (Some(group), Some(cluster)) = (stage_group(change, ix), cluster) else {
+            continue;
+        };
+        // The Stages that run a Rollout have its hop, so the Next step cell
+        // has something to select, as a live read gives it.
+        if !matches!(
+            change.stages[ix].next_step,
+            NextStep::Done | NextStep::Step { .. }
+        ) {
+            continue;
+        }
+        let key = format!("{name}-argocd");
+        let Some(at) = change.hops.iter().position(|hop| hop.key == key) else {
+            continue;
+        };
+        let hop = Hop {
+            cause: None,
+            key: format!("{name}-rollout"),
+            group,
+            state: if words == "Done" { Healthy } else { Info },
+            name: format!("Rollout {DEPLOYMENT}"),
+            detail: words.clone(),
+            from: cluster.clone(),
+            at: change.hops[at].at,
+            link: Some(Confidence::Confirmed),
+            after: Some(key),
+            shows: Shows::Hop(Box::new(HopDetail {
+                kind: "Argo Rollout".into(),
+                title: DEPLOYMENT.into(),
+                state: words,
+                notice: None,
+                fields: vec![
+                    mono("Namespace", PROJECT),
+                    mono("Name", DEPLOYMENT),
+                    mono("Read from", &cluster),
+                ],
+                link: link(
+                    Confidence::Confirmed,
+                    "name",
+                    "Application",
+                    "the Application manages it",
+                    "its name is in the Application's resources",
+                    "Managed by the Application, by name.",
+                ),
+                unlinked: None,
+                actions: vec![resource(
+                    "the Rollout",
+                    object(&cluster, argocd::GROUP, "Rollout", PROJECT, DEPLOYMENT),
+                )],
+            })),
+        };
+        change.hops.insert(at + 1, hop);
     }
 }
 
