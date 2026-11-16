@@ -11,6 +11,7 @@
 # with the screen unlocked and leave the window in front. It takes the shared
 # screen lock (scripts/smoke/lock.sh) after building, so builds and other
 # worktrees' smoke tests don't run during the measurement.
+# FRESHKUBE_STRESS_SAMPLES=<csv> samples the process while it runs (soak.sh).
 # FRESHKUBE_STRESS_BINARY can select a saved release binary for comparisons.
 set -eu
 label=$1; shift
@@ -34,8 +35,22 @@ ROOT=$root
 . $root/scripts/smoke/lock.sh
 screen_acquire stress $$
 trap screen_release EXIT
-"$stress_binary" "$@" 2> $out/$label.log
-/usr/bin/grep -E '^(summary|stress server)' $out/$label.log || true
+if [[ -n ${FRESHKUBE_STRESS_SAMPLES:-} ]]; then
+    # A soak run (scripts/soak.sh): sample the process while it runs. Its
+    # status is kept, so the log's messages (a bad FRESHKUBE_STRESS_FAULTS)
+    # are shown below before the script exits with it.
+    . $root/scripts/soak/sample.sh
+    SOAK_RELEASE=screen_release
+    run_rc=0
+    soak_exec $FRESHKUBE_STRESS_SAMPLES ${FRESHKUBE_STRESS_SAMPLE_EVERY:-30} $out/$label.log "$stress_binary" "$@" || run_rc=$?
+else
+    "$stress_binary" "$@" 2> $out/$label.log
+fi
+# The fault counts are logged cumulatively as faults happen (a native quit
+# doesn't return through main), so only the last of them is shown.
+/usr/bin/grep -E '^(summary|stress:|stress server)' $out/$label.log | /usr/bin/grep -v '^stress server faults' || true
+/usr/bin/grep '^stress server faults' $out/$label.log | tail -1 || true
+if [[ ${run_rc:-0} != 0 ]]; then exit $run_rc; fi
 if [[ $1 == monitoring ]]; then
     . $root/scripts/stress/report.sh
     monitoring_verdict $out/$label.log "${FRESHKUBE_STRESS_KEYS:-}"

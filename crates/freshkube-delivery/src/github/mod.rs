@@ -83,12 +83,13 @@ pub(crate) fn parse_pull_request(repo: &str, value: &Value) -> Option<PullReques
     })
 }
 
-pub use example::{detail as example_detail, identity as example_identity};
+pub use example::{detail as example_detail, identity as example_identity, pull as example_pull};
+pub(crate) use rest::cause_of;
 pub use rest::{
-    ACCOUNT, Capped, ChecksState, DetailKey, Error, Handle, NotSetUp, OPEN_DEADLINE, PullDetail,
-    PullState, Review, ReviewState,
+    ACCOUNT, AvatarUrl, Capped, Changed, ChecksState, DetailKey, Error, Handle, Label, NotSetUp,
+    OPEN_DEADLINE, Person, PullDetail, PullState, PullSummary, Review, ReviewState, Reviewer,
+    RunState, Stale, StatusState,
 };
-pub(crate) use rest::{PullSummary, Stale, cause_of};
 
 /// `owner/name` of the GitHub repository a Freight's first commit is on:
 /// `https://github.com/owner/name`, with an optional `.git` and trailing
@@ -127,6 +128,12 @@ pub trait GitHub {
         sha: &str,
     ) -> impl Future<Output = Result<Vec<PullRequest>, Failure>>;
     fn pull(&self, repo: &str, number: u64) -> impl Future<Output = Result<PullRequest, Failure>>;
+    /// Whether calls are scarce: no token, or the limit nearly spent. A
+    /// change then reads the pull request a squash-merge title names,
+    /// directly, before it searches GitHub for the commit.
+    fn is_sparing(&self) -> bool {
+        false
+    }
 }
 
 fn check_repo(repo: &str) -> Result<(), Failure> {

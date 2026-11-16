@@ -251,6 +251,7 @@ mod tests {
                 action: "set-image".into(),
                 tier: "spec-change".into(),
                 protection: "guarded".into(),
+                undo: None,
                 objects: vec![AuditObject {
                     group: "apps".into(),
                     resource: "deployments".into(),

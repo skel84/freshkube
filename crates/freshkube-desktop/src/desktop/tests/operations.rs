@@ -13,6 +13,7 @@ fn confirmation(
         destructive: true,
         fingerprint: 1,
         current: Rc::new(move |_| Some(current.get())),
+        type_name: None,
         on_confirm: Rc::new(move |_, _| confirmed.set(confirmed.get() + 1)),
     }
 }

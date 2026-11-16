@@ -226,6 +226,16 @@ impl ChangePage {
 
     fn render_card(&self, card: &Card, stacked: bool, cx: &mut Context<Self>) -> AnyElement {
         let p = palette(cx);
+        // The pull request's card says what GitHub told, with its author's
+        // avatar, once the read has something to say.
+        let pull = (card.id == "pr").then(|| self.pull.card()).flatten();
+        let (card_title, card_detail, card_tone) = match pull {
+            Some(pull) => (pull.title.clone(), pull.compact.clone(), pull.tone),
+            None => (card.title.clone(), card.detail.clone(), card.tone),
+        };
+        let author = pull
+            .and_then(|pull| pull.people.first())
+            .filter(|p| &*p.role == "Author");
         let selected = self
             .selected
             .as_ref()
@@ -235,7 +245,7 @@ impl ChangePage {
             .id(SharedString::from(format!("change-strip-{}", card.id)))
             .test_support()
             .role(Role::Button)
-            .aria_label(format!("{}: {}", card.title, card.detail))
+            .aria_label(format!("{card_title}: {card_detail}"))
             .flex_1()
             .min_w(dp(120.))
             .px(dp(10.))
@@ -250,7 +260,12 @@ impl ChangePage {
                 h_flex()
                     .gap(dp(6.))
                     .items_center()
-                    .child(div().flex_none().children(ui::status_glyph(card.tone, cx)))
+                    .child(div().flex_none().children(ui::status_glyph(card_tone, cx)))
+                    .children(author.map(|author| {
+                        div()
+                            .flex_none()
+                            .child(self.avatar(&author.login, author.avatar))
+                    }))
                     .child(
                         div()
                             .min_w_0()
@@ -258,7 +273,7 @@ impl ChangePage {
                             .font_weight(FontWeight::SEMIBOLD)
                             .text_size(dp(12.5))
                             .text_color(p.ink)
-                            .child(card.title.clone()),
+                            .child(card_title.clone()),
                     ),
             )
             .child(
@@ -267,9 +282,9 @@ impl ChangePage {
                     .truncate()
                     .text_size(dp(11.))
                     .text_color(p.muted)
-                    .child(card.detail.clone()),
+                    .child(card_detail.clone()),
             )
-            .follow_tooltip(format!("{}: {}", card.title, card.detail))
+            .follow_tooltip(format!("{card_title}: {card_detail}"))
             .on_click(cx.listener(move |this, _, window, cx| {
                 this.select(&select, window, cx);
                 this.focus(window, cx);

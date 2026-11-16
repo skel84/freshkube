@@ -1,0 +1,1 @@
+- **Soak run:** `scripts/soak.sh` runs a stress scenario for hours against the synthetic API with refused requests, dropped connections, slow answers and expired watches injected, samples memory, threads and open handles, and fails on steady growth.

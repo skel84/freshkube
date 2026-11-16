@@ -55,12 +55,13 @@ use freshkube_core::{
     },
     operations::{
         AuditEntry, AuditPhase, BlockingPdb, DrainOptions, DrainSummary, EtcdQuorumImpact,
-        NodeOperationResult, NodeTarget, OperationConfirmation, OperationKind,
-        OperationProgressEvent, OperationStatus, OperationStep, OperationsEvent, POD_SAMPLE_LIMIT,
-        PREFLIGHT_TIMEOUT, PodReference, SchedulingState, SelectionEvent, SelectionRequest,
-        blocking_pdbs, etcd_impact, evaluate_operation_safety, move_target, not_started,
-        ordered_sequence, panic_outcomes, preflight_nodes, run_selection,
-        selection_blocked_reason as first_blocking, selection_toggle,
+        NodeOperationResult, NodeTarget, OperationConfirmation, OperationGate, OperationKind,
+        OperationProgressEvent, OperationRefusal, OperationStatus, OperationStep, OperationsEvent,
+        POD_SAMPLE_LIMIT, PREFLIGHT_TIMEOUT, PodReference, SchedulingState, SelectionEvent,
+        SelectionRequest, blocking_pdbs, confirm_operation, etcd_impact, evaluate_operation_safety,
+        move_target, not_started, operation_gate, ordered_sequence, panic_outcomes,
+        preflight_nodes, run_selection, selection_blocked_reason as first_blocking,
+        selection_toggle,
     },
 };
 use futures::FutureExt;
@@ -731,15 +732,12 @@ async fn run_live(
     live: super::LiveSource,
     cancel: Cancel,
     tx: mpsc::UnboundedSender<RunEvent>,
+    confirmation: OperationConfirmation,
 ) -> Done {
     let audit = mutation::audit_log(&plan.context);
     let delay = sequence_delay(&plan.options, plan.targets.len());
-    let mut request = SelectionRequest::new(
-        plan.operation,
-        plan.targets,
-        plan.endpoint,
-        OperationConfirmation::confirmed(),
-    );
+    let mut request =
+        SelectionRequest::new(plan.operation, plan.targets, plan.endpoint, confirmation);
     request.drain_options = plan.options.drain;
     request.stop_on_failure = plan.options.stop_on_failure;
     request.delay_between_nodes = delay;
@@ -1381,6 +1379,20 @@ impl OperationsScreen {
         };
         let weak = cx.weak_entity();
         let current = weak.clone();
+        let type_name = match self.gate(&plan, cx) {
+            OperationGate::TypeName { expected } => {
+                Some(mutation::TypeName::new(expected, plan.targets.len() != 1))
+            }
+            OperationGate::Confirm => None,
+            // Refused after the preview: no dialog to open, and `start_run`
+            // would refuse it anyway.
+            OperationGate::Blocked(why) => {
+                self.notice = Some(format!("{why} Nothing was started."));
+                cx.notify();
+                return;
+            }
+        };
+        let typed = type_name.as_ref().map(|name| name.typed.clone());
         let confirm_label = if count == 1 {
             format!("{} node", kind_title(kind))
         } else {
@@ -1409,9 +1421,11 @@ impl OperationsScreen {
                         .ok()
                         .flatten()
                 }),
+                type_name,
                 on_confirm: Rc::new(move |window, cx| {
+                    let typed = typed.as_ref().map(|typed| typed.borrow().clone());
                     _ = weak.update(cx, |screen, cx| {
-                        screen.start_run(plan.clone(), source.clone(), window, cx)
+                        screen.start_run(plan.clone(), source.clone(), typed.as_deref(), window, cx)
                     });
                 }),
             },
@@ -1432,20 +1446,51 @@ impl OperationsScreen {
         .then(|| fingerprint(preview, &self.options))
     }
 
+    /// What the window's level asks of the plan, as it is now: the entry's
+    /// id is what several nodes are typed by (the context when no entry is
+    /// active).
+    fn gate(&self, plan: &RunPlan, cx: &App) -> OperationGate {
+        let entry = mutation::active_entry(cx).unwrap_or_else(|| plan.context.clone());
+        operation_gate(plan.operation, mutation::level(cx), &plan.targets, &entry)
+    }
+
     fn start_run(
         &mut self,
         plan: RunPlan,
         source: ScreenSource,
+        typed: Option<&str>,
         _: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        // The confirmation can't open on a read-only cluster; this keeps a
-        // run from starting if one was already open when the level changed.
-        if let Some(why) = mutation::refusal(cx) {
-            self.notice = Some(format!("{why} Nothing was started."));
-            cx.notify();
-            return;
-        }
+        // The only confirmation a run takes is core's, made from the level as
+        // it is now: a dialog opened before the cluster became read-only or
+        // protected starts nothing, and a protected one needs the name.
+        let entry = mutation::active_entry(cx).unwrap_or_else(|| plan.context.clone());
+        let confirmation = match confirm_operation(
+            plan.operation,
+            mutation::level(cx),
+            &plan.targets,
+            &entry,
+            typed.unwrap_or_default(),
+        ) {
+            Ok(confirmation) => confirmation,
+            Err(OperationRefusal::Blocked(why)) => {
+                self.notice = Some(format!("{why} Nothing was started."));
+                cx.notify();
+                return;
+            }
+            Err(OperationRefusal::NameMismatch | OperationRefusal::NoTargets) => {
+                // No field means the dialog asked for no name: the cluster
+                // became protected while it was open.
+                self.notice = Some(if typed.is_none() {
+                    "This cluster is now protected; review again. Nothing was started.".into()
+                } else {
+                    "The name wasn't typed exactly. Nothing was started.".into()
+                });
+                cx.notify();
+                return;
+            }
+        };
         let operations = Operations::global(cx);
         let label = format!(
             "{}: {} {}",
@@ -1500,7 +1545,7 @@ impl OperationsScreen {
             let live = source.live.clone();
             async move {
                 let done = match live {
-                    Some(live) => run_live(plan, live, cancel, tx.clone()).await,
+                    Some(live) => run_live(plan, live, cancel, tx.clone(), confirmation).await,
                     None => run_example(plan, cancel, tx.clone(), retained).await,
                 };
                 let _ = tx.send(RunEvent::Done(done));
