@@ -62,15 +62,11 @@ pub const STATUS_BAR_HEIGHT: f32 = 28.;
 /// The icon rail's width, and the navigation column's beside it, in dp.
 pub const RAIL_WIDTH: f32 = 64.;
 pub const COLUMN_WIDTH: f32 = 208.;
-thread_local! {
-    /// The width of the navigation beside the page in dp: the rail, and the
-    /// column when it shows. Windows draw on one thread, and the shell sets
-    /// it whenever the column shows or hides.
-    static CHROME_WIDTH: Cell<f32> = const { Cell::new(RAIL_WIDTH + COLUMN_WIDTH) };
-}
-
+/// Sets the width of the navigation beside the focused pane: the rail, and
+/// the column when it shows. The shell sets it whenever the column shows or
+/// hides.
 pub fn set_chrome_width(width: f32) {
-    CHROME_WIDTH.set(width);
+    crate::pane::focused().set_chrome(width);
 }
 
 /// The width of a page in `dp` (pixels at the default text size): the
@@ -79,7 +75,7 @@ pub fn set_chrome_width(width: f32) {
 /// a narrower window would.
 pub fn page_width(window: &Window) -> f32 {
     let viewport = window.viewport_size().width / dp_px(1., window);
-    (viewport - CHROME_WIDTH.get()).max(240.)
+    (viewport - crate::pane::current(window).chrome()).max(240.)
 }
 
 /// The width inside a page's [`inset`], such as its header's, in `dp`.
@@ -111,26 +107,20 @@ pub fn page(id: impl Into<ElementId>) -> Observed<Stateful<Div>> {
 /// table page's header and a usable list together, so the page scrolls its
 /// frame instead: under [`SHORT_HEIGHT`].
 pub fn is_short(window: &Window) -> bool {
-    window.viewport_size().height - crate::ui::dp_px(below(), window)
+    window.viewport_size().height - crate::ui::dp_px(below(window), window)
         < crate::ui::dp_px(SHORT_HEIGHT, window)
-}
-
-thread_local! {
-    /// The height in dp taken under the page by the dock, which the shell
-    /// sets as it draws. Windows draw on one thread.
-    static BELOW: std::cell::Cell<f32> = const { std::cell::Cell::new(0.) };
 }
 
 /// Tells pages how much of the window's height, in dp, the dock takes
 /// under them, so a page under an open dock lays out as in a window that
 /// much shorter.
 pub fn set_below(height: f32) {
-    BELOW.set(height.max(0.));
+    crate::pane::focused().set_below(height);
 }
 
 /// The height in dp the dock takes under the page.
-pub fn below() -> f32 {
-    BELOW.get()
+pub fn below(window: &Window) -> f32 {
+    crate::pane::current(window).below()
 }
 
 /// Content inside a [`page`]'s pane: padded 12 at the sides and 10 above

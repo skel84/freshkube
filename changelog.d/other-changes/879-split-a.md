@@ -1,0 +1,1 @@
+- Prepare the split view: a page's room (the navigation beside it, the dock under it and the node inspector in it) is now kept per pane instead of in three global values. Nothing changes on screen with one pane (#879).
