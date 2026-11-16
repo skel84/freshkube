@@ -12,11 +12,17 @@ impl DetailPane {
         let section = |title: &str, cx: &App| v_flex().gap_2().child(ui::caption(title, cx));
         let mut body = v_flex()
             .gap(dp(18.))
+            .children(
+                (!detail.target.kind.is_pod())
+                    .then(|| self.alerts_section(true, cx))
+                    .flatten(),
+            )
             .children(self.external_secret_section(cx))
             .children(self.traffic_section(cx))
             .when(detail.target.kind.is_pod(), |this| {
                 this.child(self.pod_sections(cx))
             })
+            .children(self.alerts_section(false, cx))
             // After the pod's own sections: they are what a short pane needs first.
             .children(self.netpol_section(cx))
             .child(

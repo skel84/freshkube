@@ -12,6 +12,11 @@ pub enum KeyFileError {
     Escapes,
     NotFound,
     NotAFile,
+    /// A tree entry of mode 120000: a link, which is never followed.
+    Symlink,
+    TooLarge,
+    /// Not exactly one PEM public key.
+    NotAKey,
 }
 
 impl std::fmt::Display for KeyFileError {
@@ -22,6 +27,9 @@ impl std::fmt::Display for KeyFileError {
             KeyFileError::Escapes => "that key file leads outside the team repository",
             KeyFileError::NotFound => "the key file isn’t in the team repository",
             KeyFileError::NotAFile => "the key file isn’t a regular file",
+            KeyFileError::Symlink => "the key file is a link, which is refused",
+            KeyFileError::TooLarge => "the key file is larger than 8 KiB",
+            KeyFileError::NotAKey => "the key file isn’t one PEM public key",
         })
     }
 }
@@ -54,4 +62,56 @@ pub fn resolve_in_repo(root: &Path, relative: &str) -> Result<PathBuf, KeyFileEr
         return Err(KeyFileError::NotAFile);
     }
     Ok(real)
+}
+
+/// The most a key file may hold.
+pub const MOST_KEY_BYTES: u64 = 8 * 1024;
+
+/// Checks a key file path as a name inside the repository, before any object
+/// is looked up: relative, no `..`, no empty, `.` or backslash segment.
+pub fn check_repo_path(relative: &str) -> Result<(), KeyFileError> {
+    if relative.starts_with('/') || relative.starts_with('\\') || relative.contains(':') {
+        return Err(KeyFileError::Absolute);
+    }
+    if relative.chars().any(char::is_control) || relative.contains('\\') {
+        return Err(KeyFileError::Escapes);
+    }
+    for part in relative.split('/') {
+        match part {
+            ".." => return Err(KeyFileError::ParentSegment),
+            "" | "." => return Err(KeyFileError::Escapes),
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
+/// `SHA256:` and the base64 of the SHA-256 of the key's DER, as the
+/// supply-chain screens show a key: never the key itself.
+pub fn fingerprint(pem: &[u8]) -> Result<String, KeyFileError> {
+    use base64::Engine;
+    use base64::engine::general_purpose::{STANDARD, STANDARD_NO_PAD};
+    use sha2::{Digest, Sha256};
+    const BEGIN: &str = "-----BEGIN PUBLIC KEY-----";
+    const END: &str = "-----END PUBLIC KEY-----";
+    if pem.len() as u64 > MOST_KEY_BYTES {
+        return Err(KeyFileError::TooLarge);
+    }
+    let text = std::str::from_utf8(pem).map_err(|_| KeyFileError::NotAKey)?;
+    let rest = text
+        .trim()
+        .strip_prefix(BEGIN)
+        .ok_or(KeyFileError::NotAKey)?;
+    let (body, after) = rest.split_once(END).ok_or(KeyFileError::NotAKey)?;
+    if !after.trim().is_empty() {
+        return Err(KeyFileError::NotAKey);
+    }
+    let encoded: String = body.split_whitespace().collect();
+    let der = STANDARD
+        .decode(encoded)
+        .map_err(|_| KeyFileError::NotAKey)?;
+    Ok(format!(
+        "SHA256:{}",
+        STANDARD_NO_PAD.encode(Sha256::digest(der))
+    ))
 }
