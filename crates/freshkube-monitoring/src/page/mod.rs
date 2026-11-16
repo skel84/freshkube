@@ -198,6 +198,8 @@ pub struct ScopeInputs {
 }
 
 pub struct MonitoringPage {
+    /// The pane this page draws in, which it asks for its room.
+    pane: freshkube_ui::pane::Pane,
     runtime: Handle,
     store: Option<MonitoringStore>,
     saved: Saved,
@@ -278,6 +280,7 @@ impl MonitoringPage {
             })
             .collect();
         let mut page = Self {
+            pane: Default::default(),
             runtime,
             store,
             saved,

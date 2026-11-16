@@ -371,7 +371,7 @@ async fn a_long_destination_save_caps_the_banner_and_reveals_the_new_row(cx: &mu
                 window,
             ));
             let scroll = page.read(cx).banners_scroll.clone();
-            if freshkube_ui::page::is_short(window) {
+            if freshkube_ui::pane::Pane::default().is_short(window) {
                 assert!(
                     scroll.bounds().size.height <= cap + px(2.),
                     "{banners:?} exceeds {cap:?}"

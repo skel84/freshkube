@@ -1,0 +1,1 @@
+- A page now keeps the pane it draws in and asks it for its width and room, in place of three window-wide values. Nothing changes on screen (#879).

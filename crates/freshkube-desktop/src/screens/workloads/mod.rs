@@ -201,6 +201,8 @@ fn age(created: Option<DateTime<Utc>>) -> String {
 /// The visible rows for one data set and one set of filters. The data is
 /// held, so pointer identity can't be reused by a newer set.
 pub(crate) struct WorkloadsScreen {
+    /// The pane this page draws in, which it asks for its room.
+    pane: freshkube_ui::pane::Pane,
     _runtime: Handle,
     summary_managed: bool,
     /// Where the shell's summary stands, for while Health has none.
@@ -288,6 +290,7 @@ impl WorkloadsScreen {
             }
         });
         Self {
+            pane: Default::default(),
             _runtime: runtime,
             summary_managed: false,
             summary: Summary::default(),
@@ -536,7 +539,7 @@ impl WorkloadsScreen {
     fn reveal_if_opened(&self, was_open: bool, window: &Window, cx: &mut Context<Self>) {
         if !was_open
             && self.selected.is_some()
-            && crate::screens::page_width(window) < inspector::SPLIT_WIDTH
+            && self.pane.page_width(window) < inspector::SPLIT_WIDTH
         {
             // Closed again: there is nothing to reveal.
             table::reveal_when_settled(

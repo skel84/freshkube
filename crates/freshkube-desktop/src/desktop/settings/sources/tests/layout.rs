@@ -213,8 +213,8 @@ fn sources_table_and_inspector_follow_the_shared_geometry_at_every_size(cx: &mut
                 );
                 let table = window.find("settings-sources-table").bounds();
                 let inspector = window.find("settings-source-inspector").bounds();
-                let beside =
-                    crate::screens::page_width(window) >= freshkube_ui::inspector::SPLIT_WIDTH;
+                let beside = freshkube_ui::pane::Pane::default().page_width(window)
+                    >= freshkube_ui::inspector::SPLIT_WIDTH;
                 assert_eq!(beside, width == 1280. && text == 13.);
                 if beside {
                     assert!(inspector.left() >= table.right());

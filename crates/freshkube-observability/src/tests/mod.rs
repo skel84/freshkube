@@ -97,9 +97,8 @@ fn mount_with(
         crate::text_size::install(None, cx);
         Theme::change(ThemeMode::Dark, None, cx);
         cx.set_reduce_motion(true);
-        freshkube_ui::page::set_chrome_width(
-            freshkube_ui::page::RAIL_WIDTH + freshkube_ui::page::COLUMN_WIDTH,
-        );
+        freshkube_ui::pane::Pane::default()
+            .set_chrome(freshkube_ui::page::RAIL_WIDTH + freshkube_ui::page::COLUMN_WIDTH);
     });
     let runtime = tokio::runtime::Runtime::new().unwrap();
     let mut page = None;
@@ -145,7 +144,7 @@ impl Render for TestChrome {
             freshkube_ui::page::COLUMN_WIDTH
         };
         let chrome = freshkube_ui::page::RAIL_WIDTH + column;
-        freshkube_ui::page::set_chrome_width(chrome);
+        freshkube_ui::pane::Pane::default().set_chrome(chrome);
         gpui_kit::component::h_flex()
             .size_full()
             .child(div().w(crate::ui::dp(chrome)).h_full().flex_none())

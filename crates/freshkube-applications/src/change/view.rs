@@ -303,12 +303,12 @@ impl ChangePage {
     }
 
     fn render_table(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
-        let beside = freshkube_ui::page::page_width(window) >= inspector::SPLIT_WIDTH;
+        let beside = self.pane.page_width(window) >= inspector::SPLIT_WIDTH;
         // The full columns need their sum, and a page that can't give it
         // drops Time and Read from rather than cut them at its edge. Beside
         // the Inspector (900 dp or more) the table scrolls sideways instead,
         // with the glyph and the hop pinned.
-        let room = freshkube_ui::page::page_width(window);
+        let room = self.pane.page_width(window);
         self.compact.set(if room >= table::full_width() {
             table::Width::Full
         } else if room >= table::compact_width() {
@@ -335,7 +335,7 @@ impl Render for ChangePage {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let _span = crate::perf::span("page.render");
         let header = self.render_header(window, cx);
-        let short = page::is_short(window);
+        let short = self.pane.is_short(window);
         let notes = self.render_notes(short, window, cx);
         let summary = self.render_summary(window, cx);
         let body = match self.render_failed(cx) {
@@ -352,7 +352,7 @@ impl Render for ChangePage {
             ChangeView::Hops => &self.split,
         };
         let least = split.short_height(
-            page::page_width(window) >= inspector::SPLIT_WIDTH,
+            self.pane.page_width(window) >= inspector::SPLIT_WIDTH,
             self.selected.is_some(),
         );
         let least = match self.view {

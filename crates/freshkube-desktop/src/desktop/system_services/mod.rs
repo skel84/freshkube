@@ -117,6 +117,8 @@ pub(crate) enum ServiceEvent {
 }
 
 pub(super) struct SystemServices {
+    /// The pane this page draws in, which it asks for its room.
+    pane: freshkube_ui::pane::Pane,
     rows: Vec<ServiceRow>,
     /// The table's lines, derived when the rows or a filter change.
     lines: Vec<Entry>,
@@ -164,6 +166,7 @@ impl SystemServices {
         let loading = table::LoadingRows::new(PREFIX);
         let loading_motion = cx.new(|_| loading.motion(table::Look::Pulse));
         Self {
+            pane: Default::default(),
             rows: Vec::new(),
             lines: Vec::new(),
             counts: [0; 3],
@@ -507,7 +510,7 @@ impl Render for SystemServices {
         crate::desktop::probe::hit(PREFIX);
         let _span = crate::perf::span("page.render");
         // A short window scrolls the frame, so the list keeps some rows.
-        let short = page::is_short(window);
+        let short = self.pane.is_short(window);
         page::page("system-services-page")
             .track_scroll(&self.page_scroll)
             .when(short, |this| {

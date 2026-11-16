@@ -27,7 +27,7 @@ use tokio::runtime::Handle;
 
 use super::{
     Loader, Scope, ScreenEvent, ScreenPanel, ScreenSource, TableLoading, failure_banner, field,
-    first_read, gate, mono, page_width, panel, partial_notice, refresh_control, segment,
+    first_read, gate, mono, panel, partial_notice, refresh_control, segment,
 };
 use crate::palette::palette;
 use crate::ui::{self, MONO_FONT, Tone, dp};
@@ -78,6 +78,8 @@ enum Item {
 }
 
 pub(crate) struct LifecycleScreen {
+    /// The pane this page draws in, which it asks for its room.
+    pane: freshkube_ui::pane::Pane,
     runtime: Handle,
     source: Option<ScreenSource>,
     summary_nodes: Option<Subscription>,
@@ -117,6 +119,7 @@ impl LifecycleScreen {
             KeyBinding::new("escape", ClearSelection, Some(CONTEXT)),
         ]);
         Self {
+            pane: Default::default(),
             runtime,
             source: None,
             summary_nodes: None,

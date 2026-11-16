@@ -88,6 +88,8 @@ enum Entry {
 }
 
 pub struct WaitingPage {
+    /// The pane this page draws in, which it asks for its room.
+    pane: freshkube_ui::pane::Pane,
     runtime: tokio::runtime::Handle,
     secrets: Option<freshkube_core::secrets::Secrets>,
     setup_revision: u64,
@@ -157,6 +159,7 @@ impl WaitingPage {
             }
         });
         Self {
+            pane: Default::default(),
             runtime,
             secrets,
             setup_revision: 0,
@@ -544,7 +547,7 @@ impl WaitingPage {
             self.rebuild(cx);
         }
         kit::reveal(self, ScrollStrategy::Nearest);
-        if freshkube_ui::page::page_width(window) < freshkube_ui::inspector::SPLIT_WIDTH {
+        if self.pane.page_width(window) < freshkube_ui::inspector::SPLIT_WIDTH {
             kit::reveal_when_settled(
                 cx.entity().downgrade(),
                 |page| page.selected.is_some(),

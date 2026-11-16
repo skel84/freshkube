@@ -349,7 +349,7 @@ impl LifecycleScreen {
         // The Inspector sits beside the roster only when the roster still
         // fits whole beside its least width, and takes at most the rest,
         // however wide it was dragged before; otherwise it goes under it.
-        let width = page_width(window);
+        let width = self.pane.page_width(window);
         let beside =
             width >= inspector::SPLIT_WIDTH && width >= view.display.width + inspector::MIN_WIDTH;
         self.split.keep_lead(view.display.width, width);

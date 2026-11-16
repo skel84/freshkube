@@ -51,6 +51,8 @@ pub(super) struct OverviewState {
 }
 
 pub(super) struct OverviewPage {
+    /// The pane this page draws in, which it asks for its room.
+    pane: freshkube_ui::pane::Pane,
     display: Arc<Overview>,
     attention: Arc<Attention>,
     state: OverviewState,
@@ -69,6 +71,7 @@ impl OverviewPage {
             _ = page.update(cx, |_, cx| cx.emit(OverviewEvent::Config(action)));
         });
         Self {
+            pane: Default::default(),
             display: Default::default(),
             attention: Default::default(),
             state: Default::default(),

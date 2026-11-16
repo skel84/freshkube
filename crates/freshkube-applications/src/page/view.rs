@@ -220,7 +220,7 @@ impl ApplicationPage {
             .min_h_0()
             .child(kit::data_table(self, window, cx).flex_1().min_h_0())
             .into_any_element();
-        let beside = freshkube_ui::page::page_width(window) >= inspector::SPLIT_WIDTH;
+        let beside = self.pane.page_width(window) >= inspector::SPLIT_WIDTH;
         let details = self.render_details(cx);
         let least = self.split.short_height(beside, details.is_some());
         let split = inspector::split(
@@ -243,7 +243,7 @@ impl Render for ApplicationPage {
             PageTab::Parts => self.render_table(window, cx),
             PageTab::Timeline => (self.timeline.clone().into_any_element(), 0.),
         };
-        let short = page::is_short(window);
+        let short = self.pane.is_short(window);
         // The keys live on a wrapper drawn in every state.
         div()
             .key_context(CONTEXT)

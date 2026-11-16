@@ -61,6 +61,8 @@ struct Target {
 }
 
 pub(super) struct DataView {
+    /// The pane this page draws in, which it asks for its room.
+    pane: freshkube_ui::pane::Pane,
     runtime: Handle,
     session: Option<(u64, Shared)>,
     epoch: u64,
@@ -84,6 +86,7 @@ impl DataView {
             KeyBinding::new("escape", Close, Some("ExploreData")),
         ]);
         Self {
+            pane: Default::default(),
             runtime,
             session: None,
             epoch: 0,
@@ -327,7 +330,7 @@ impl DataView {
         inspector::split(
             "explore-data-split",
             &self.split,
-            crate::screens::page_width(window) >= inspector::SPLIT_WIDTH + 360.,
+            self.pane.page_width(window) >= inspector::SPLIT_WIDTH + 360.,
             table,
             self.details(cx),
             window,

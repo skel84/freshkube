@@ -146,6 +146,8 @@ enum Entry {
 }
 
 pub struct ApplicationPage {
+    /// The pane this page draws in, which it asks for its room.
+    pane: freshkube_ui::pane::Pane,
     id: ApplicationId,
     name: SharedString,
     /// What the application is, as the header names it beside the name.
@@ -205,6 +207,7 @@ impl ApplicationPage {
             cx.new(|cx| timeline::TimelineView::new(&name, fetch, cx))
         };
         let mut page = Self {
+            pane: Default::default(),
             id: app.id.clone(),
             name: app.name.clone().into(),
             what: what_it_is(app).into(),

@@ -581,7 +581,10 @@ fn a_narrow_window_at_large_text_shows_one_card_to_a_row(cx: &mut TestAppContext
         crate::desktop::tests::settle_header(window, cx);
         window.click("nodes-view-cards", cx);
         window.render_frame(cx);
-        assert_eq!(super::super::cards::card_columns(window), 1);
+        assert_eq!(
+            super::super::cards::card_columns(&freshkube_ui::pane::Pane::default(), window),
+            1
+        );
         let list = window.find("nodes-cards").bounds();
         let first = pilot.read(cx).pages.node_workspace.read(cx).lines[0];
         let first = pilot.read(cx).pages.node_workspace.read(cx).rows[first]

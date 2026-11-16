@@ -48,6 +48,8 @@ actions!(
 );
 
 pub(crate) struct AccessScreen {
+    /// The pane this page draws in, which it asks for its room.
+    pane: freshkube_ui::pane::Pane,
     runtime: Handle,
     source: Option<ClusterSource>,
     visible: bool,
@@ -88,6 +90,7 @@ impl AccessScreen {
             KeyBinding::new("r", Recheck, Some(CONTEXT)),
         ]);
         Self {
+            pane: Default::default(),
             runtime,
             source: None,
             visible: false,

@@ -18,7 +18,9 @@ use gpui_kit::{
 
 use crate::menu::{self, MenuAction};
 use crate::palette::palette;
-use crate::ui::{CONTROL_HEIGHT, Tone, badge_dot, dp, dp_px, status_glyph, toolbar_label};
+#[cfg(test)]
+use crate::ui::dp_px;
+use crate::ui::{CONTROL_HEIGHT, Tone, badge_dot, dp, status_glyph, toolbar_label};
 
 gpui_kit::actions!(
     pilot,
@@ -45,7 +47,7 @@ pub const PANE_PADDING: f32 = 12.;
 /// Above and below that content.
 pub const PANE_PADDING_Y: f32 = 10.;
 /// A window shorter than this, in dp, scrolls a table page's frame: see
-/// [`is_short`].
+/// [`Pane::is_short`](crate::pane::Pane::is_short).
 pub const SHORT_HEIGHT: f32 = 620.;
 /// The least height a table page's list keeps while its frame scrolls.
 pub const SHORT_LIST_HEIGHT: f32 = 180.;
@@ -62,33 +64,6 @@ pub const STATUS_BAR_HEIGHT: f32 = 28.;
 /// The icon rail's width, and the navigation column's beside it, in dp.
 pub const RAIL_WIDTH: f32 = 64.;
 pub const COLUMN_WIDTH: f32 = 208.;
-/// Sets the width of the navigation beside the focused pane: the rail, and
-/// the column when it shows. The shell sets it whenever the column shows or
-/// hides.
-pub fn set_chrome_width(width: f32) {
-    crate::pane::focused().set_chrome(width);
-}
-
-/// The width of a page in `dp` (pixels at the default text size): the
-/// window less the rail and column. A page without margins has all of it,
-/// so its breakpoints compare this; a larger text size leaves less room, as
-/// a narrower window would.
-pub fn page_width(window: &Window) -> f32 {
-    let viewport = window.viewport_size().width / dp_px(1., window);
-    (viewport - crate::pane::current(window).chrome()).max(240.)
-}
-
-/// The width inside a page's [`inset`], such as its header's, in `dp`.
-pub fn inset_width(window: &Window) -> f32 {
-    (page_width(window) - PANE_PADDING * 2.).max(240.)
-}
-
-/// The width inside a [padded] page's margins in `dp`, for choosing between
-/// side-by-side and stacked layouts there.
-pub fn content_width(window: &Window) -> f32 {
-    (page_width(window) - PAGE_PADDING * 2.).max(240.)
-}
-
 /// The header's filter beside the title, at its full width.
 const FILTER_WIDTH: f32 = 150.;
 /// The filter's width when the row is full with every control folded.
@@ -97,30 +72,10 @@ const FILTER_MIN: f32 = 96.;
 /// A page's frame, without margins: its header, any banners and its panes
 /// stack edge to edge, and the caller puts what isn't a pane, such as the
 /// header, in an [`inset`]. The caller adds scrolling: a table page scrolls
-/// its frame when the window [`is_short`], and its list keeps at least
+/// its frame when the window [`is_short`](crate::pane::Pane::is_short), and its list keeps at least
 /// [`SHORT_LIST_HEIGHT`].
 pub fn page(id: impl Into<ElementId>) -> Observed<Stateful<Div>> {
     v_flex().id(id).test_support().size_full().min_h_0()
-}
-
-/// Whether the window, less the dock under the page, is too short for a
-/// table page's header and a usable list together, so the page scrolls its
-/// frame instead: under [`SHORT_HEIGHT`].
-pub fn is_short(window: &Window) -> bool {
-    window.viewport_size().height - crate::ui::dp_px(below(window), window)
-        < crate::ui::dp_px(SHORT_HEIGHT, window)
-}
-
-/// Tells pages how much of the window's height, in dp, the dock takes
-/// under them, so a page under an open dock lays out as in a window that
-/// much shorter.
-pub fn set_below(height: f32) {
-    crate::pane::focused().set_below(height);
-}
-
-/// The height in dp the dock takes under the page.
-pub fn below(window: &Window) -> f32 {
-    crate::pane::current(window).below()
 }
 
 /// Content inside a [`page`]'s pane: padded 12 at the sides and 10 above

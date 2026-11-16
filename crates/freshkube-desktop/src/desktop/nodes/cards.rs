@@ -1,7 +1,6 @@
 use super::*;
 use crate::{
     palette::palette,
-    screens::inset_width,
     ui::{MONO_FONT, dp},
 };
 use freshkube_ui::tooltip::FollowTooltip as _;
@@ -15,8 +14,10 @@ use gpui_kit::{
 /// The gap between cards and below each row of them.
 const CARD_GAP: f32 = 14.;
 
-pub(super) fn card_columns(window: &Window) -> usize {
-    ((inset_width(window) + 14.) / 330.).floor().clamp(1., 3.) as usize
+pub(super) fn card_columns(pane: &freshkube_ui::pane::Pane, window: &Window) -> usize {
+    ((pane.inset_width(window) + 14.) / 330.)
+        .floor()
+        .clamp(1., 3.) as usize
 }
 
 impl Nodes {
@@ -26,7 +27,11 @@ impl Nodes {
         window: &Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let columns = if compact { 1 } else { card_columns(window) };
+        let columns = if compact {
+            1
+        } else {
+            card_columns(&self.pane, window)
+        };
         let count = self.lines.len();
         if count == 0 {
             return ui::empty_state(

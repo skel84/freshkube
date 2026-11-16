@@ -506,8 +506,8 @@ fn the_node_screens_follow_the_inspector_after_a_text_size_change(cx: &mut TestA
             }
             window.render_frame(cx);
             let pane = window.find("node-inspector").bounds().size.width / dp_px(1., window);
-            let seen =
-                crate::screens::embedded_width(window) + freshkube_ui::page::PANE_PADDING * 2.;
+            let seen = freshkube_ui::pane::Pane::default().embedded_width(window)
+                + freshkube_ui::page::PANE_PADDING * 2.;
             assert!(
                 (pane - seen).abs() <= 1.,
                 "{what}: the inspector is {pane} dp, its screens lay out by {seen}"

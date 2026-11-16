@@ -302,7 +302,7 @@ impl AccessScreen {
         inspector::split(
             "access-split",
             &self.split,
-            super::super::page_width(window) >= inspector::SPLIT_WIDTH,
+            self.pane.page_width(window) >= inspector::SPLIT_WIDTH,
             table,
             self.details(cx),
             window,
@@ -328,7 +328,7 @@ impl Render for AccessScreen {
             None
         };
         let banners = self.banners(cx);
-        let short = page::is_short(window);
+        let short = self.pane.is_short(window);
         let body = if let Some(words) = state {
             page::inset()
                 .child(
@@ -353,7 +353,7 @@ impl Render for AccessScreen {
             self.body(window, cx)
         };
         let least = self.split.short_height(
-            super::super::page_width(window) >= inspector::SPLIT_WIDTH,
+            self.pane.page_width(window) >= inspector::SPLIT_WIDTH,
             self.selected.is_some(),
         );
         let body = div()

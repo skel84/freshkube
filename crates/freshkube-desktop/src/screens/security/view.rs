@@ -164,7 +164,7 @@ impl SecurityScreen {
             .children(partial_notice(missing.clone(), cx))
             .child(Self::summary(stats, cx));
         let table = self.render_table(window, cx);
-        let beside = crate::screens::page_width(window) >= inspector::SPLIT_WIDTH;
+        let beside = self.pane.page_width(window) >= inspector::SPLIT_WIDTH;
         let details = self.render_details(cx);
         let split = inspector::split(
             "security-split",

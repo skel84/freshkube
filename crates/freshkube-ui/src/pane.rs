@@ -2,143 +2,137 @@
 //! the height the dock takes under it, and the width of the node inspector
 //! in it (#879).
 //!
-//! A page asks through `page::page_width`, `page::below` and the like with
-//! only its window. The answer is the metrics of the pane the view being
-//! drawn belongs to: a view registers its pane's metrics with [`register`],
-//! and any view that did not (every view while there is one pane) gets the
-//! focused pane's. That fallback is how one pane works: nothing registers,
-//! and every page reads the one pane's room. Windows draw on one thread, so
-//! the registry is thread-local; it is keyed by window and view, and an
-//! entry goes when its view is released.
-use gpui_kit::{App, Entity, EntityId, Window, WindowId};
-use std::cell::{Cell, RefCell};
-use std::collections::HashMap;
+//! A page keeps the [`Pane`] it draws in and asks it for `page_width`,
+//! `inset_width`, `content_width`, `is_short` and the rest. Nothing is looked
+//! up by what is being drawn, so a handler may ask outside a frame.
+//!
+//! This is the target the split reaches in steps. Today there is one pane,
+//! and a page made without being told its pane is in the window's main pane
+//! (`Pane::default()`), which every page and the shell share. That default is
+//! removed, and each parent hands its handle to the children it makes, in
+//! slice B2, so that an answer can never be another pane's.
+use gpui_kit::Window;
+use std::cell::Cell;
 use std::rc::Rc;
 
-use crate::page::{COLUMN_WIDTH, RAIL_WIDTH};
+use crate::page::{COLUMN_WIDTH, PAGE_PADDING, PANE_PADDING, RAIL_WIDTH, SHORT_HEIGHT};
+use crate::ui::dp_px;
 
 /// One pane's room, in dp. Cells, so the shell sets them as it draws.
 #[derive(Debug)]
-pub struct PaneMetrics {
+struct Room {
     chrome: Cell<f32>,
     below: Cell<f32>,
     node_pane: Cell<f32>,
 }
 
-impl PaneMetrics {
-    /// A pane with the rail and the column beside it, nothing under it and
-    /// no node inspector.
-    pub fn new() -> Rc<Self> {
-        Rc::new(Self {
+/// A handle to one pane's room. Clones share it.
+#[derive(Clone, Debug)]
+pub struct Pane(Rc<Room>);
+
+thread_local! {
+    /// The main pane. Windows draw on one thread.
+    static MAIN: Pane = Pane::new();
+}
+
+impl Default for Pane {
+    /// The main pane: the one pane there is until a second is made.
+    fn default() -> Self {
+        MAIN.with(Pane::clone)
+    }
+}
+
+impl Pane {
+    /// A pane of its own, with the rail and the column beside it, nothing
+    /// under it and no node inspector.
+    pub fn new() -> Self {
+        Self(Rc::new(Room {
             chrome: Cell::new(RAIL_WIDTH + COLUMN_WIDTH),
             below: Cell::new(0.),
             node_pane: Cell::new(f32::MAX),
-        })
+        }))
+    }
+
+    /// Whether `other` is this same pane.
+    pub fn is(&self, other: &Pane) -> bool {
+        Rc::ptr_eq(&self.0, &other.0)
     }
 
     /// The width of the navigation beside the pane: the rail, and the column
     /// when it shows.
     pub fn chrome(&self) -> f32 {
-        self.chrome.get()
+        self.0.chrome.get()
     }
 
+    /// Sets it; the shell does whenever the column shows or hides.
     pub fn set_chrome(&self, width: f32) {
-        self.chrome.set(width);
+        self.0.chrome.set(width);
     }
 
-    /// The height the dock takes under the pane.
+    /// The height in dp the dock takes under the pane.
     pub fn below(&self) -> f32 {
-        self.below.get()
+        self.0.below.get()
     }
 
+    /// Tells pages how much of the window's height, in dp, the dock takes
+    /// under them, so a page under an open dock lays out as in a window that
+    /// much shorter.
     pub fn set_below(&self, height: f32) {
-        self.below.set(height.max(0.));
+        self.0.below.set(height.max(0.));
     }
 
     /// The node inspector's width: the page's when it stacks or fills it.
     pub fn node_pane(&self) -> f32 {
-        self.node_pane.get()
+        self.0.node_pane.get()
     }
 
     pub fn set_node_pane(&self, width: f32) {
-        self.node_pane.set(width);
+        self.0.node_pane.set(width);
     }
-}
 
-/// A view's place in the registry: its window and its entity.
-type Key = (WindowId, EntityId);
-
-thread_local! {
-    static FOCUSED: RefCell<Rc<PaneMetrics>> = RefCell::new(PaneMetrics::new());
-    static VIEWS: RefCell<HashMap<Key, Rc<PaneMetrics>>> = RefCell::new(HashMap::new());
-}
-
-/// The focused pane's metrics: what a view that registered none gets, and
-/// what the shell sets while there is one pane.
-pub fn focused() -> Rc<PaneMetrics> {
-    FOCUSED.with(|focused| focused.borrow().clone())
-}
-
-/// Makes `metrics` the focused pane's.
-pub fn focus(metrics: Rc<PaneMetrics>) {
-    FOCUSED.with(|focused| *focused.borrow_mut() = metrics);
-}
-
-/// Says that `view` draws in the pane with `metrics`, in `window`. The entry
-/// goes when the view is released.
-pub fn register<T: 'static>(
-    view: &Entity<T>,
-    metrics: Rc<PaneMetrics>,
-    window: &Window,
-    cx: &mut App,
-) {
-    let key = (window.window_handle().window_id(), view.entity_id());
-    VIEWS.with(|views| views.borrow_mut().insert(key, metrics));
-    cx.observe_release(view, move |_, _| {
-        VIEWS.with(|views| views.borrow_mut().remove(&key));
-    })
-    .detach();
-}
-
-/// How many views are registered, for tests.
-#[cfg(any(test, feature = "testing"))]
-pub fn registered() -> usize {
-    VIEWS.with(|views| views.borrow().len())
-}
-
-/// The metrics of the pane the view being drawn is in.
-///
-/// While no view is registered, which is the case with one pane, this is the
-/// focused pane's and never asks the window which view is drawing: that is
-/// allowed only while a frame is being laid out or painted, and a page also
-/// asks its width from an event handler. A view that is not registered gets
-/// the focused pane's too, with no panic.
-pub fn current(window: &Window) -> Rc<PaneMetrics> {
-    if VIEWS.with(|views| views.borrow().is_empty()) {
-        return focused();
+    /// The width of a page in `dp` (pixels at the default text size): the
+    /// window less the rail and column. A page without margins has all of
+    /// it, so its breakpoints compare this; a larger text size leaves less
+    /// room, as a narrower window would.
+    pub fn page_width(&self, window: &Window) -> f32 {
+        let viewport = window.viewport_size().width / dp_px(1., window);
+        (viewport - self.chrome()).max(240.)
     }
-    let key = (window.window_handle().window_id(), window.current_view());
-    VIEWS
-        .with(|views| views.borrow().get(&key).cloned())
-        .unwrap_or_else(focused)
+
+    /// The width inside a page's [`inset`](crate::page::inset), such as its
+    /// header's, in `dp`.
+    pub fn inset_width(&self, window: &Window) -> f32 {
+        (self.page_width(window) - PANE_PADDING * 2.).max(240.)
+    }
+
+    /// The width inside a padded page's margins in `dp`, for choosing
+    /// between side-by-side and stacked layouts there.
+    pub fn content_width(&self, window: &Window) -> f32 {
+        (self.page_width(window) - PAGE_PADDING * 2.).max(240.)
+    }
+
+    /// The width inside the node inspector's tab body in `dp`, where
+    /// embedded screens choose between side-by-side and stacked layouts.
+    pub fn embedded_width(&self, window: &Window) -> f32 {
+        let pane = self.node_pane().min(self.page_width(window));
+        (pane - PANE_PADDING * 2.).max(240.)
+    }
+
+    /// Whether the window, less the dock under the page, is too short for a
+    /// table page's header and a usable list together, so the page scrolls
+    /// its frame instead: under `SHORT_HEIGHT`.
+    pub fn is_short(&self, window: &Window) -> bool {
+        window.viewport_size().height - dp_px(self.below(), window) < dp_px(SHORT_HEIGHT, window)
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use gpui_kit::{AppContext, Context, IntoElement, Render, TestAppContext, div, px, size};
-
-    struct Empty;
-
-    impl Render for Empty {
-        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-            div()
-        }
-    }
 
     #[test]
     fn a_negative_height_is_clamped() {
-        let pane = PaneMetrics::new();
+        let pane = Pane::new();
         pane.set_below(-5.);
         assert_eq!(pane.below(), 0.);
         pane.set_below(120.);
@@ -146,32 +140,14 @@ mod tests {
     }
 
     #[test]
-    fn the_focused_pane_is_what_one_pane_reads() {
-        let one = PaneMetrics::new();
-        one.set_chrome(52.);
-        focus(one);
-        assert_eq!(focused().chrome(), 52.);
-        assert_eq!(VIEWS.with(|v| v.borrow().len()), 0);
-    }
-
-    #[gpui_kit::test]
-    fn a_registered_view_goes_when_it_is_released(cx: &mut TestAppContext) {
-        let handle = cx.open_window(size(px(400.), px(300.)), |window, cx| {
-            let view = cx.new(|_| Empty);
-            gpui_kit::component::Root::new(view, window, cx)
-        });
-        let page = handle
-            .update(cx, |_, window, cx| {
-                let page = cx.new(|_| Empty);
-                register(&page, PaneMetrics::new(), window, cx);
-                page
-            })
-            .unwrap();
-        assert_eq!(registered(), 1);
-        drop(page);
-        // Releases are noticed when the app next flushes its effects.
-        cx.update(|_| ());
-        cx.run_until_parked();
-        assert_eq!(registered(), 0, "no entry is left once the page is gone");
+    fn a_default_pane_is_the_main_pane_and_a_new_one_is_its_own() {
+        let (a, b) = (Pane::default(), Pane::default());
+        assert!(a.is(&b));
+        a.set_chrome(52.);
+        assert_eq!(b.chrome(), 52.);
+        let other = Pane::new();
+        assert!(!other.is(&a));
+        assert_eq!(other.chrome(), RAIL_WIDTH + COLUMN_WIDTH);
+        a.set_chrome(RAIL_WIDTH + COLUMN_WIDTH);
     }
 }

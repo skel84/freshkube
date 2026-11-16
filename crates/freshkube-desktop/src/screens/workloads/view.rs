@@ -153,13 +153,13 @@ impl Render for WorkloadsScreen {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         crate::desktop::probe::hit("workloads");
         self.sync(cx);
-        let beside = crate::screens::page_width(window) >= inspector::SPLIT_WIDTH;
+        let beside = self.pane.page_width(window) >= inspector::SPLIT_WIDTH;
         let inspector = if beside && self.detail.is_some() {
             self.split.live_width(cx)
         } else {
             0.
         };
-        self.fit_name_column(crate::screens::page_width(window) - inspector);
+        self.fit_name_column(self.pane.page_width(window) - inspector);
         self.loading.show(self.first_read(cx));
         let header = self.render_header(window, cx);
         // The table runs edge to edge under the toolbar; the banners and a

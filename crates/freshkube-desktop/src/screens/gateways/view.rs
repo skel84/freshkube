@@ -29,7 +29,7 @@ impl GatewaysScreen {
         );
         // Under the width where the toolbar has room for words, an icon
         // alone with its tooltip and label.
-        let narrow = super::super::page_width(window) < NARROW_TOOLBAR;
+        let narrow = self.pane.page_width(window) < NARROW_TOOLBAR;
         let openable = self.selected_row().is_some_and(|row| row.openable);
         let label = self.mode.open_label();
         let button = Button::new(SharedString::from(format!("{prefix}-open")))
@@ -374,7 +374,7 @@ impl GatewaysScreen {
         inspector::split(
             SharedString::from(format!("{prefix}-split")),
             &self.split,
-            super::super::page_width(window) >= inspector::SPLIT_WIDTH,
+            self.pane.page_width(window) >= inspector::SPLIT_WIDTH,
             table,
             self.details(cx),
             window,
@@ -437,7 +437,7 @@ impl Render for GatewaysScreen {
                 .test_support()
             });
         let empty = !loading && self.display.lines.is_empty();
-        let short = page::is_short(window);
+        let short = self.pane.is_short(window);
         let retryable = self.source.is_some()
             && (self.display.error.is_some() || self.loader.error().is_some());
         let body = if let Some(words) = state {
@@ -466,7 +466,7 @@ impl Render for GatewaysScreen {
             self.body(window, cx)
         };
         let least = self.split.short_height(
-            super::super::page_width(window) >= inspector::SPLIT_WIDTH,
+            self.pane.page_width(window) >= inspector::SPLIT_WIDTH,
             self.selected.is_some(),
         );
         let has_notes = !notices.is_empty() || failure.is_some();

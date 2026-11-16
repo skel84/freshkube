@@ -73,7 +73,7 @@ impl SettingsPage {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let narrow = page::content_width(window) < form::NARROW;
+        let narrow = self.pane.content_width(window) < form::NARROW;
         let header =
             page::PageHeader::new("settings-notifications", "Notifications").render(window, cx);
         let body = match followed(cx) {

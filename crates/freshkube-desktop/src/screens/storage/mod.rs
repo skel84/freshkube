@@ -130,6 +130,8 @@ fn summary(
 }
 
 pub(crate) struct StorageScreen {
+    /// The pane this page draws in, which it asks for its room.
+    pane: freshkube_ui::pane::Pane,
     /// The table's rows until the first answer.
     loading: TableLoading,
     embedded: bool,
@@ -160,6 +162,7 @@ impl StorageScreen {
             KeyBinding::new("tab", SwitchView, Some(CONTEXT)),
         ]);
         Self {
+            pane: Default::default(),
             embedded: false,
             runtime,
             source: None,

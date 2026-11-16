@@ -194,7 +194,8 @@ fn the_inspector_opens_with_a_selection_and_escape_closes_it(cx: &mut TestAppCon
             );
             let table = window.find("security-table").bounds();
             let detail = window.find("security-detail").bounds();
-            let beside = crate::screens::page_width(window) >= freshkube_ui::inspector::SPLIT_WIDTH;
+            let beside = freshkube_ui::pane::Pane::default().page_width(window)
+                >= freshkube_ui::inspector::SPLIT_WIDTH;
             assert_eq!(width > 1200., beside, "{width}");
             if beside {
                 assert!(detail.left() >= table.right(), "{width}: {detail:?}");

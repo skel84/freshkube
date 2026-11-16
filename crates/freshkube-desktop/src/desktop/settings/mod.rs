@@ -143,6 +143,8 @@ pub(super) enum Origin {
 }
 
 pub(crate) struct SettingsPage {
+    /// The pane this page draws in, which it asks for its room.
+    pane: freshkube_ui::pane::Pane,
     connection: Option<connection::ConnectionForm>,
     coroot: Option<coroot::CorootForm>,
     /// Where Observability's connection stands, pushed by the shell.
@@ -396,6 +398,7 @@ impl SettingsPage {
         let team_runtime = runtime.clone();
         let team_secrets = metrics_secrets.clone();
         let mut page = Self {
+            pane: Default::default(),
             connection: None,
             coroot: None,
             coroot_state: crate::observability::ConnectionState::Disconnected,
@@ -878,7 +881,7 @@ impl SettingsPage {
         } else {
             ui::Tone::Good
         };
-        let short = page::is_short(window);
+        let short = self.pane.is_short(window);
         page::capped_notes(
             "settings-banners",
             if short {
@@ -1097,7 +1100,7 @@ impl SettingsPage {
     /// A list section's frame: a table page's, which scrolls in a short
     /// window while its list keeps `SHORT_LIST_HEIGHT`.
     fn list_frame(&self, window: &Window) -> gpui_kit::base::ObservedElement<Stateful<Div>> {
-        let short = page::is_short(window);
+        let short = self.pane.is_short(window);
         page::page("settings-page")
             .track_scroll(&self.page_scroll)
             .when(short, |this| {
@@ -1155,7 +1158,7 @@ impl SettingsPage {
             .min_h_0()
             .child(table::data_table(self, window, cx).flex_1().min_h_0())
             .into_any_element();
-        let beside = crate::screens::page_width(window) >= inspector::SPLIT_WIDTH;
+        let beside = self.pane.page_width(window) >= inspector::SPLIT_WIDTH;
         let details = if self.menu_holds_inspector {
             None
         } else {

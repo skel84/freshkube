@@ -47,7 +47,7 @@ impl GraphView {
     }
 
     /// The page's width in dp, when it is wider than what the card may take,
-    /// such as `screens::page_width` on a padded page.
+    /// such as `Pane::content_width` on a padded page.
     pub fn page_width(mut self, width: f32) -> Self {
         self.page_width = width;
         self

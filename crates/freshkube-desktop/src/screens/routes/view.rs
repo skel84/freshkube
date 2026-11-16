@@ -28,7 +28,7 @@ impl RoutesScreen {
         );
         // Under the width where the toolbar has room for words, icons alone,
         // each with its tooltip and label.
-        let narrow = super::super::page_width(window) < NARROW_TOOLBAR;
+        let narrow = self.pane.page_width(window) < NARROW_TOOLBAR;
         let action = |id: &'static str, icon: IconName, label: &'static str, tip: &'static str| {
             let button = Button::new(id)
                 .ghost()
@@ -167,7 +167,7 @@ impl RoutesScreen {
         inspector::split(
             "routes-split",
             &self.split,
-            super::super::page_width(window) >= inspector::SPLIT_WIDTH,
+            self.pane.page_width(window) >= inspector::SPLIT_WIDTH,
             table,
             self.details(cx),
             window,
@@ -220,7 +220,7 @@ impl Render for RoutesScreen {
                 .test_support()
             });
         let empty = !loading && self.display.lines.is_empty();
-        let short = page::is_short(window);
+        let short = self.pane.is_short(window);
         let body = if let Some(words) = state {
             page::inset()
                 .child(
@@ -245,7 +245,7 @@ impl Render for RoutesScreen {
             self.body(window, cx)
         };
         let least = self.split.short_height(
-            super::super::page_width(window) >= inspector::SPLIT_WIDTH,
+            self.pane.page_width(window) >= inspector::SPLIT_WIDTH,
             self.selected.is_some(),
         );
         let has_notes = !notices.is_empty() || failure.is_some();

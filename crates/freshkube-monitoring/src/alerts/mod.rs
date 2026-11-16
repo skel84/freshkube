@@ -210,6 +210,8 @@ pub enum AlertsEvent {
 }
 
 pub struct AlertsPage {
+    /// The pane this page draws in, which it asks for its room.
+    pane: freshkube_ui::pane::Pane,
     which: Which,
     runtime: Handle,
     source: Option<ClusterSource>,
@@ -261,6 +263,7 @@ impl AlertsPage {
         let mut loader = Loader::default();
         loader.set_visible(false, ON_SHOW, cx);
         Self {
+            pane: Default::default(),
             which,
             runtime,
             source: None,
@@ -550,7 +553,7 @@ impl AlertsPage {
         self.selected = Some(row.key.clone());
         self.inspect = true;
         kit::reveal(self, ScrollStrategy::Nearest);
-        if freshkube_ui::page::page_width(window) < freshkube_ui::inspector::SPLIT_WIDTH {
+        if self.pane.page_width(window) < freshkube_ui::inspector::SPLIT_WIDTH {
             kit::reveal_when_settled(
                 cx.entity().downgrade(),
                 |page| page.selected.is_some(),

@@ -248,7 +248,7 @@ impl ExploreView {
 impl Render for ExploreView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         // Below this the rows would have no room beside the browser.
-        let beside = crate::screens::page_width(window) >= BESIDE_WIDTH;
+        let beside = self.pane.page_width(window) >= BESIDE_WIDTH;
         let connected = self.phase == Phase::Connected;
         let body = if connected {
             let p = palette(cx);

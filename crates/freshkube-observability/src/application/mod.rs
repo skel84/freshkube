@@ -616,7 +616,7 @@ impl ObservabilityPage {
         }
         // A chart narrower than this is hard to read, so it takes a row
         // alone; a page narrower than it gives each chart the whole row.
-        let roomy = freshkube_ui::page::content_width(window) >= MIN_CHART_WIDTH;
+        let roomy = self.pane.content_width(window) >= MIN_CHART_WIDTH;
         // Coroot's widths are shares of a row; the margins make the gaps.
         let mut grid = div().flex().flex_wrap().mx(dp(-4.)).my(dp(-4.));
         for block in &page.blocks {

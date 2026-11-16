@@ -310,7 +310,7 @@ impl ObservabilityPage {
         let split = freshkube_ui::inspector::split(
             "obs-incidents-split",
             &self.incident_split,
-            inspector_beside(window),
+            inspector_beside(&self.pane, window),
             table,
             detail,
             window,

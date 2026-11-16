@@ -120,6 +120,8 @@ struct CheckIdentity {
 }
 
 pub(crate) struct SourcesList {
+    /// The pane this page draws in, which it asks for its room.
+    pane: freshkube_ui::pane::Pane,
     rows: Vec<SourceRow>,
     selected: Option<Read>,
     /// A row popup keeps the table's ancestry until focus returns.
@@ -168,6 +170,7 @@ impl SourcesList {
     ) -> Self {
         let sources = Sources::of(&Default::default());
         let mut list = Self {
+            pane: Default::default(),
             rows: Vec::new(),
             selected: None,
             menu_holds_inspector: false,
@@ -575,9 +578,9 @@ impl Render for SourcesList {
             .upgrade()
             .map(|page| page.read(cx).render_banners(cx))
             .unwrap_or_default();
-        let beside = crate::screens::page_width(window) >= freshkube_ui::inspector::SPLIT_WIDTH;
+        let beside = self.pane.page_width(window) >= freshkube_ui::inspector::SPLIT_WIDTH;
         let details = self.render_inspector(window, cx);
-        let room = crate::screens::page_width(window)
+        let room = self.pane.page_width(window)
             - if beside && details.is_some() {
                 self.split.live_width(cx)
             } else {

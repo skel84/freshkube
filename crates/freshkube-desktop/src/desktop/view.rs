@@ -192,7 +192,7 @@ impl Pilot {
         let strip = self.follow_strip(cx);
         let dock = self.pages.dock.read(cx).shown_height(window, cx);
         let accent = crate::palette::palette(cx).accent;
-        freshkube_ui::page::set_below(
+        self.pane.set_below(
             dock.map(|height| height / crate::ui::dp_px(1., window))
                 .unwrap_or(0.),
         );

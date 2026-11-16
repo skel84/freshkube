@@ -271,6 +271,8 @@ struct RowsKey {
 }
 
 pub(crate) struct NetworkScreen {
+    /// The pane this page draws in, which it asks for its room.
+    pane: freshkube_ui::pane::Pane,
     /// The showing view's rows until the first answer.
     loading: TableLoading,
     embedded: bool,
@@ -338,6 +340,7 @@ impl NetworkScreen {
             }
         });
         Self {
+            pane: Default::default(),
             embedded: false,
             runtime,
             source: None,

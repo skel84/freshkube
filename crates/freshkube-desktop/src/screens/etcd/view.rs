@@ -187,7 +187,7 @@ impl EtcdScreen {
     /// The table, with the selected member's details beside it on a wide
     /// page and below it on a narrow one.
     fn render_members(&self, window: &Window, cx: &mut Context<Self>) -> AnyElement {
-        let beside = crate::screens::beside(window, false);
+        let beside = crate::screens::beside(&self.pane, window, false);
         let table = DataTable::new()
             // A first read shows three loading rows, a usual quorum.
             .fit(if self.loading.rows().is_some() {

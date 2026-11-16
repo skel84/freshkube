@@ -143,7 +143,7 @@ impl SettingsPage {
     pub(super) fn render_general(&self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let (appearance, automatic, has_talos, saved) =
             Chrome::general_values(window, cx).unwrap_or((Appearance::System, true, true, false));
-        let narrow = page::content_width(window) < form::NARROW;
+        let narrow = self.pane.content_width(window) < form::NARROW;
         let appearance_control = ButtonGroup::new("general-appearance")
             .outline()
             .small()
@@ -284,7 +284,7 @@ mod tests {
     fn general_is_a_settings_form_at_each_window_and_text_size(cx: &mut gpui_kit::TestAppContext) {
         use crate::desktop::{layout_check, testing::fixture};
         use crate::{text_size, ui};
-        use freshkube_ui::{form, page};
+        use freshkube_ui::form;
         use gpui_kit::{AppContext, px, test::TestWindowExt};
 
         for (width, height) in [(1280., 880.), (760., 560.)] {
@@ -314,7 +314,7 @@ mod tests {
                     let control = window.find("general-appearance-system").bounds();
                     let label = window.find("general-appearance-row-label").bounds();
                     assert!((control.size.height - dp(ui::CONTROL_HEIGHT)).abs() < px(1.));
-                    if page::content_width(window) < form::NARROW {
+                    if freshkube_ui::pane::Pane::default().content_width(window) < form::NARROW {
                         assert!((control.left() - label.left()).abs() < px(1.));
                         assert!(control.top() >= label.bottom() + dp(4.) - px(1.));
                     } else {
