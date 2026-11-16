@@ -131,8 +131,14 @@ impl Pilot {
     /// the context shown decides. Prepared on a source change and when the
     /// setup changes, never while drawing.
     pub(in crate::desktop) fn prepare_protection(&mut self, cx: &mut App) -> bool {
-        let level = self.current_level(cx);
+        // A stricter level a send found in the file stands until the app reads
+        // the file itself.
+        let level = self
+            .current_level(cx)
+            .stricter(crate::mutation::level_floor(cx).unwrap_or(Protection::Open));
         crate::mutation::set_active_entry(self.switch.active_cluster().map(str::to_owned), cx);
+        // The context the window shows, for the name a send reads again.
+        crate::mutation::set_window_context(self.display_context(cx), cx);
         // Every entry's level, so a write to an entry the window doesn't show
         // follows a change made in Settings as the window's own does.
         crate::mutation::set_entry_levels(self.entry_levels(cx), cx);
@@ -142,6 +148,13 @@ impl Pilot {
             settings.source_recovery.clone(),
         );
         crate::mutation::set_workspace_levels(&workspace, &recovery, cx);
+        // The file a write's send step reads again.
+        let setup_file = self.setup_file.read(cx);
+        let (file, from_file) = (
+            setup_file.file().map(std::path::Path::to_path_buf),
+            setup_file.setup.is_some(),
+        );
+        crate::mutation::set_setup_file(file, from_file, cx);
         // The dock's shells read their own entry's level, never the shown
         // one (#878); the dock learns the shown entry for the tabs it opens.
         let entry = self.switch.active_cluster().map(str::to_owned);

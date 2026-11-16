@@ -63,6 +63,7 @@ use freshkube_core::{
         preflight_nodes, run_selection, selection_blocked_reason as first_blocking,
         selection_toggle,
     },
+    write::SetupLevels,
 };
 use futures::FutureExt;
 use gpui_kit::assets::IconName;
@@ -83,7 +84,7 @@ use super::{
     page_width, panel, reading, refresh_control, retry_button, segment, split_at,
 };
 use crate::backend;
-use crate::mutation::{self, Confirmation, Operations, Refused};
+use crate::mutation::{self, Confirmation, OperationTicket, Operations, Refused};
 use crate::palette::palette;
 use crate::presentation::Role as NodeRole;
 use crate::ui::{self, MONO_FONT, Tone, dp};
@@ -1379,6 +1380,9 @@ impl OperationsScreen {
         };
         let weak = cx.weak_entity();
         let current = weak.clone();
+        // The setup file this send step reads again, for the identity the
+        // dialog is for (#1055).
+        let guard = mutation::send_guard(&plan.context, source.is_example(), cx);
         let type_name = match self.gate(&plan, cx) {
             OperationGate::TypeName { expected } => {
                 Some(mutation::TypeName::new(expected, plan.targets.len() != 1))
@@ -1425,7 +1429,14 @@ impl OperationsScreen {
                 on_confirm: Rc::new(move |window, cx| {
                     let typed = typed.as_ref().map(|typed| typed.borrow().clone());
                     _ = weak.update(cx, |screen, cx| {
-                        screen.start_run(plan.clone(), source.clone(), typed.as_deref(), window, cx)
+                        screen.start_run(
+                            plan.clone(),
+                            source.clone(),
+                            typed.as_deref(),
+                            guard.clone(),
+                            window,
+                            cx,
+                        )
                     });
                 }),
             },
@@ -1459,6 +1470,7 @@ impl OperationsScreen {
         plan: RunPlan,
         source: ScreenSource,
         typed: Option<&str>,
+        guard: Option<SetupLevels>,
         _: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -1518,6 +1530,53 @@ impl OperationsScreen {
                 return;
             }
         };
+        let Some(guard) = guard else {
+            self.launch_run(plan, source, confirmation, ticket, cx);
+            return;
+        };
+        // The slot is held while the setup file is read again off the UI
+        // thread, so a second press finds it busy. A file that got stricter,
+        // or can't say, sends nothing and gives the slot back (#1055).
+        let held = mutation::level(cx);
+        let operations = Operations::global(cx);
+        cx.spawn(async move |this, cx| {
+            let decided =
+                mutation::level_at_send(Some(guard), held, cx.background_executor()).await;
+            let refused = match decided {
+                // A stricter level is kept too, so the next dialog is asked
+                // under it.
+                Err(refusal) => Some(cx.update(|cx| mutation::refused_text(refusal, cx))),
+                // The window may have moved while the file was read.
+                Ok(_) => cx.update(|cx| mutation::moved_during_read(held, cx)),
+            };
+            let Some(text) = refused else {
+                // A screen that is gone drops the ticket with this closure,
+                // which gives the slot back.
+                _ = this.update(cx, |screen, cx| {
+                    screen.launch_run(plan, source, confirmation, ticket, cx)
+                });
+                return;
+            };
+            _ = this.update(cx, |screen, cx| {
+                screen.notice = Some(format!("{text} Nothing was started."));
+                cx.notify();
+            });
+            operations.update(cx, |operations, cx| operations.finish(ticket, cx));
+        })
+        .detach();
+    }
+
+    /// Starts the run the confirmation was made for. The ticket is the slot,
+    /// held from here to the end of the run.
+    fn launch_run(
+        &mut self,
+        plan: RunPlan,
+        source: ScreenSource,
+        confirmation: OperationConfirmation,
+        ticket: OperationTicket,
+        cx: &mut Context<Self>,
+    ) {
+        let operations = Operations::global(cx);
         self.notice = None;
         self.next_run += 1;
         let id = self.next_run;
