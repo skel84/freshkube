@@ -662,7 +662,9 @@ fn each_section_opens_from_its_page_slug(cx: &mut TestAppContext) {
 fn the_change_pages_fix_actions_open_the_sources_and_destinations_sections(
     cx: &mut TestAppContext,
 ) {
-    use freshkube_ui::platform::{OpenDestinationsSettings, OpenSourcesSettings};
+    use freshkube_ui::platform::{
+        OpenDestinationsSettings, OpenMonitoringSettings, OpenSourcesSettings,
+    };
     let (_runtime, handle, view) = fixture(cx, 1280., 880.);
     for (action, section, list) in [
         (
@@ -674,6 +676,13 @@ fn the_change_pages_fix_actions_open_the_sources_and_destinations_sections(
             Box::new(OpenDestinationsSettings),
             SettingsSection::Destinations,
             "settings-destinations-list",
+        ),
+        // Alerts' and the dashboard's Open Settings land on Monitoring, not
+        // on whichever section was shown last (#1052).
+        (
+            Box::new(OpenMonitoringSettings),
+            SettingsSection::Monitoring,
+            "settings-monitoring-form",
         ),
     ] {
         cx.update_window(handle, |_, window, cx| {

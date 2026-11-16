@@ -583,7 +583,8 @@ impl Render for SourcesList {
             } else {
                 0.
             };
-        self.width = source::fit_columns(&mut self.columns, (room - 2.).max(0.));
+        let keep_identity = !(beside && details.is_some());
+        self.width = source::fit_columns(&mut self.columns, (room - 2.).max(0.), keep_identity);
         let table = div()
             .id("settings-sources-table")
             .test_support()

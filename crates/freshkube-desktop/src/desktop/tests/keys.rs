@@ -373,6 +373,7 @@ fn the_shell_binds_the_keys_and_actions_it_did(cx: &mut TestAppContext) {
         "app::OpenClustersSettings",
         "app::OpenCorootSettings",
         "app::OpenDestinationsSettings",
+        "app::OpenMonitoringSettings",
         "app::OpenSettings",
         "app::OpenSourcesSettings",
         "dock::OpenAgent",

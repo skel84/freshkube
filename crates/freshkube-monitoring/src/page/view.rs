@@ -26,6 +26,7 @@ use crate::store::Choice;
 use crate::ui::{self, dp, dp_px};
 use freshkube_ui::page::{self, Fold, MenuItems, PageHeader};
 use freshkube_ui::read_state::{ReadActions, read_state};
+use freshkube_ui::ui::EmptyDetails;
 use std::rc::Rc;
 
 impl Render for MonitoringPage {
@@ -464,7 +465,7 @@ impl MonitoringPage {
                     not_set_up_state(),
                     ReadActions {
                         open_settings: Some(open_settings_button("monitoring-open-settings")),
-                        details: Some(why.to_string()),
+                        details: Some(EmptyDetails::Note(why.to_string())),
                         ..ReadActions::default()
                     },
                     cx,
@@ -507,7 +508,7 @@ impl MonitoringPage {
             &missing.state,
             ReadActions {
                 open_settings: Some(open_settings_button("monitoring-open-settings")),
-                details: Some(missing.details.clone()),
+                details: Some(missing.details()),
                 extra: {
                     actions.push(retry("monitoring-retry", "Look again"));
                     actions
@@ -693,12 +694,7 @@ fn scrolled(scroll: &ScrollHandle, unit: Pixels) -> f32 {
 
 /// An Open Settings button: the app's own Settings action.
 fn open_settings_button(id: &'static str) -> AnyElement {
-    Button::new(id)
-        .outline()
-        .small()
-        .label("Open Settings")
-        .on_click(|_, window, cx| {
-            window.dispatch_action(Box::new(freshkube_ui::platform::OpenSettings), cx);
-        })
-        .into_any_element()
+    freshkube_ui::read_state::open_settings_button_to(id, || {
+        Box::new(freshkube_ui::platform::OpenMonitoringSettings)
+    })
 }

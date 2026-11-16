@@ -307,7 +307,7 @@ impl SourcesList {
                         Some(namespace.clone()),
                         format!(
                             "Build namespace: suggested from {}\n{namespace} holds every \
-                             PipelineRun found; Accept sets delivery.build_namespace to it\nReads \
+                             PipelineRun found; Accept sets the build namespace in the setup file to it\nReads \
                              delivery.build_namespace",
                             item.found_from
                         ),
@@ -329,7 +329,7 @@ impl SourcesList {
                             Some(template.clone()),
                             format!(
                                 "Build namespace: one namespace per project, as {}\n{}; \
-                                 Accept sets delivery.build_namespace to the template {template}\n\
+                                 Accept sets the build namespace in the setup file to it\n\
                                  Reads delivery.build_namespace",
                                 match fits.len() {
                                     1 => "1 project has".to_owned(),
@@ -390,7 +390,7 @@ impl SourcesList {
                     item.found_from.clone(),
                     true,
                     (state.to_owned(), tone),
-                    "delivery.build_namespace".to_owned(),
+                    "Setup file".to_owned(),
                     tooltip,
                 );
                 self.finder.accept = accept;

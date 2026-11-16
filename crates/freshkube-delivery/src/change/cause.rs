@@ -45,27 +45,53 @@ impl Role {
     }
 }
 
-/// A field of Settings: the section to open and the setup file's key.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// A field of Settings: the section to open, the setup file's key and the
+/// setting's name in words. A new field must give all of them, so none can
+/// show up on screen as the file writes it or as a blank.
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub struct SettingsField {
     /// The Settings page's slug, such as `settings-sources`.
     pub section: &'static str,
-    /// The key in `freshkube.yaml`, such as `delivery.build_namespace`.
+    /// The key in `freshkube.yaml`, such as `delivery.build_namespace`. It is
+    /// for a tooltip or the Inspector, never the sentence.
     pub field: &'static str,
+    /// The setting as Settings names it, lowercase, for a short clause such as
+    /// "stage naming not set".
+    pub name: &'static str,
+    /// What the setting decides, in plain words that finish "Set …".
+    pub means: &'static str,
+}
+
+/// Debug shows the section and the key only, as it did before the words were
+/// added: the change's Debug output is fingerprinted in tests, and the words
+/// follow from the key.
+impl std::fmt::Debug for SettingsField {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SettingsField")
+            .field("section", &self.section)
+            .field("field", &self.field)
+            .finish()
+    }
 }
 
 impl SettingsField {
     pub const BUILD_NAMESPACE: Self = Self {
         section: "settings-sources",
         field: "delivery.build_namespace",
+        name: "build namespace",
+        means: "where builds run",
     };
     pub const STAGE_NAMING: Self = Self {
         section: "settings-sources",
         field: "delivery.stage_naming",
+        name: "stage naming",
+        means: "how an Application's name gives its Stage",
     };
     pub const DESTINATIONS: Self = Self {
         section: "settings-destinations",
         field: "destinations",
+        name: "destinations",
+        means: "which cluster each Argo CD destination is",
     };
 }
 

@@ -432,7 +432,10 @@ pub fn suggest_build_namespace(
         note(
             &mut out,
             true,
-            format!("delivery.build_namespace is {current}, which holds no PipelineRuns"),
+            format!(
+                "The build namespace in the setup file is {}, which holds no PipelineRuns",
+                freshkube_core::setup::plain_template(current)
+            ),
         );
     }
     if let Some(current) = current
@@ -446,8 +449,10 @@ pub fn suggest_build_namespace(
             &mut out,
             false,
             format!(
-                "delivery.build_namespace is {current}, a template that still names namespaces \
-                 with PipelineRuns; Kargo's projects weren't read, so nothing is suggested"
+                "The build namespace in the setup file is {}, a template that still names \
+                 namespaces with PipelineRuns; Kargo's projects weren't read, so nothing is \
+                 suggested",
+                freshkube_core::setup::plain_template(current)
             ),
         );
         return out;
