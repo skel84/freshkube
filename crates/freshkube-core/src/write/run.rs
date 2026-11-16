@@ -7,9 +7,11 @@
 use std::{io, sync::Mutex, time::Duration};
 
 use super::{
-    LevelCell, Phase, Protection,
-    action::{ActionDescription, Change, Inverse, ObjectChange, Target},
+    LevelCell, Phase, Protection, SendRefusal, SetupLevels, Unreadable,
+    action::{ActionDescription, Change, Destination, Inverse, ObjectChange, Target},
+    at_send,
     audit::{AuditObject, AuditRequest, AuditStore, Record, RunId, SCHEMA, scrub},
+    fresh::{READ_DEADLINE, read_within},
     outcome::{Accepted, Observed, Watching, observe},
     preflight::{Block, Prepared, Who},
     requirement::{Confirmation, UNDO_WINDOW},
@@ -26,6 +28,10 @@ pub struct Runner {
     /// The cluster's level as it is now. A write reads it again just before
     /// it is sent.
     pub(super) level: LevelCell,
+    /// The setup file read again just before a send (#1055): the app defers
+    /// reading a changed file while a dialog is open, so the level it holds
+    /// can be older than the file's.
+    pub(super) recheck: Option<SetupLevels>,
     /// Example data: it asks nothing of the cluster and sends nothing, so a
     /// dialog can be shown without one.
     pub(super) example: bool,
@@ -229,7 +235,27 @@ impl Finished {
 }
 
 impl Runner {
-    pub fn new(client: kube::Client, audit: AuditStore, who: Who) -> Self {
+    /// A runner for a live cluster. It reads `setup` again at its send step,
+    /// so there is no runner that sends without having been told which file
+    /// and whose level to read ([`SetupLevels::unavailable`] for a window that
+    /// has none, which refuses).
+    pub fn new(client: kube::Client, audit: AuditStore, who: Who, setup: SetupLevels) -> Self {
+        Self::build(client, audit, who, Some(setup))
+    }
+
+    /// A runner that doesn't read the setup file at its send step, for tests
+    /// that exercise the rest of the framework on a fake cluster.
+    #[cfg(any(test, feature = "testing"))]
+    pub fn unchecked(client: kube::Client, audit: AuditStore, who: Who) -> Self {
+        Self::build(client, audit, who, None)
+    }
+
+    fn build(
+        client: kube::Client,
+        audit: AuditStore,
+        who: Who,
+        recheck: Option<SetupLevels>,
+    ) -> Self {
         let level = LevelCell::new(who.protection);
         Self {
             client,
@@ -237,6 +263,7 @@ impl Runner {
             who,
             watching: Watching::default(),
             level,
+            recheck,
             example: false,
             example_objects: vec![],
             alert_scope: None,
@@ -249,7 +276,7 @@ impl Runner {
     pub fn example(client: kube::Client, audit: AuditStore, who: Who) -> Self {
         Self {
             example: true,
-            ..Self::new(client, audit, who)
+            ..Self::build(client, audit, who, None)
         }
     }
 
@@ -280,6 +307,69 @@ impl Runner {
     pub fn following(mut self, level: LevelCell) -> Self {
         self.level = level;
         self
+    }
+
+    /// Whether this runner follows `cell`, the level cell of a window.
+    pub fn follows(&self, cell: &LevelCell) -> bool {
+        self.level.same(cell)
+    }
+
+    /// Reads `setup` again at the send step, for a test runner made with
+    /// [`Self::unchecked`].
+    #[cfg(any(test, feature = "testing"))]
+    pub fn rechecking(mut self, setup: SetupLevels) -> Self {
+        self.recheck = Some(setup);
+        self
+    }
+
+    /// What the setup file says at the send step, against what the app holds
+    /// for the cluster and each destination it keeps a level for: `None` when
+    /// nothing is stricter, else why nothing is sent. A stricter level is also
+    /// put into the level cell, so the person is asked again under it.
+    async fn setup_refusal(&self, action: &ActionDescription) -> Option<NotSent> {
+        let setup = self.recheck.clone().filter(|_| !self.example)?;
+        let known: Vec<&Destination> = action
+            .destinations
+            .iter()
+            .filter(|destination| destination.cell.is_some())
+            .collect();
+        let entries: Vec<String> = known.iter().map(|d| d.entry.clone()).collect();
+        let read = read_within(READ_DEADLINE, move || setup.read_with(&entries)).await;
+        let cannot_say = |why: Unreadable| {
+            Some(NotSent::Unchecked(format!(
+                "{} Nothing was sent.",
+                SendRefusal::Unreadable(why).text()
+            )))
+        };
+        let (own, others) = match read {
+            Ok(levels) => levels,
+            Err(why) => return cannot_say(why),
+        };
+        let mut stricter = None;
+        match at_send(self.level.get(), Ok(own)) {
+            Ok(_) => {}
+            Err(SendRefusal::Stricter(level)) => {
+                self.level.set(level);
+                stricter = Some(level);
+            }
+            Err(SendRefusal::Unreadable(why)) => return cannot_say(why),
+        }
+        // A destination the file has nothing to say about (`None`) is held to
+        // what the app holds.
+        for (destination, fresh) in known.into_iter().zip(others) {
+            let (Some(cell), Some(fresh)) = (&destination.cell, fresh) else {
+                continue;
+            };
+            match at_send(destination.level(), Ok(fresh)) {
+                Ok(_) => {}
+                Err(SendRefusal::Stricter(level)) => {
+                    cell.set(level);
+                    stricter = Some(stricter.map_or(level, |held| held.stricter(level)));
+                }
+                Err(SendRefusal::Unreadable(why)) => return cannot_say(why),
+            }
+        }
+        stricter.map(NotSent::LevelChanged)
     }
 
     /// The level an action is held to now: the strictest of the cluster's
@@ -382,6 +472,12 @@ impl Runner {
                 || (requirement.cancel_window.is_some() && level != prepared_level))
                 .then_some(NotSent::LevelChanged(level))
         };
+        // The file as it is now, not as the app last read it, and then the
+        // level the app holds, read after the file so a change made in the app
+        // while the file was read is seen too.
+        if let Some(not_sent) = self.setup_refusal(&description).await {
+            return finished(Status::NotSent(not_sent), vec![], None, None);
+        }
         if let Some(not_sent) = refused_at(self.level_for(&description)) {
             return finished(Status::NotSent(not_sent), vec![], None, None);
         }
@@ -393,6 +489,12 @@ impl Runner {
             let started = tokio::time::Instant::now();
             while started.elapsed() < window && !cancel() {
                 tokio::time::sleep(Duration::from_millis(50)).await;
+            }
+            // A file edited while the countdown ran is seen.
+            if !cancel()
+                && let Some(not_sent) = self.setup_refusal(&description).await
+            {
+                return finished(Status::NotSent(not_sent), vec![], None, None);
             }
         }
         // The one reading the send is decided on, and the level every audit

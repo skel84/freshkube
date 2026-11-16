@@ -60,7 +60,7 @@ fn history(names: &[&str]) -> Value {
 }
 
 fn kargo_runner(cluster: &Cluster, dir: &std::path::Path, level: Protection) -> Runner {
-    Runner::new(
+    Runner::unchecked(
         cluster.client.clone(),
         AuditStore::new(dir.join("audit")),
         Who {

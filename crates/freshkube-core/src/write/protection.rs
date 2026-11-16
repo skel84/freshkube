@@ -146,6 +146,12 @@ impl LevelCell {
     pub fn set(&self, level: Protection) {
         self.0.store(Self::code(level), Ordering::SeqCst);
     }
+
+    /// Whether `other` is this very cell (a window's, shared with a runner),
+    /// not merely a cell holding the same level now, which is what `==` asks.
+    pub fn same(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.0, &other.0)
+    }
 }
 
 /// Two cells are equal when they hold the same level now.
@@ -160,6 +166,17 @@ impl Eq for LevelCell {}
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `==` asks whether two cells hold the same level now; `same` asks
+    /// whether they are the one cell.
+    #[test]
+    fn same_is_the_one_cell_and_not_a_cell_holding_the_same_level() {
+        let cell = LevelCell::new(Protection::Guarded);
+        let other = LevelCell::new(Protection::Guarded);
+        assert_eq!(cell, other);
+        assert!(!cell.same(&other));
+        assert!(cell.same(&cell.clone()));
+    }
 
     #[test]
     fn a_shell_starts_from_its_own_level_at_each_level_and_never_without_one() {

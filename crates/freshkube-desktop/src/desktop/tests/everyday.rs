@@ -31,6 +31,8 @@ struct World {
     view: Entity<Pilot>,
     cluster: Cluster,
     dir: tempfile::TempDir,
+    /// Keeps the world's setup file published for the shell; dropped with it.
+    _setup: Option<crate::mutation::SetupFileOverride>,
 }
 
 /// The shell on the example workspace's entry `entry`, over a fake cluster
@@ -48,18 +50,60 @@ fn world_on(cx: &mut TestAppContext, entry: &str, make: impl FnOnce() -> Cluster
         let _guard = runtime.enter();
         make()
     };
-    let world = World {
+    let mut world = World {
         runtime,
         handle,
         view,
         cluster,
         dir,
+        _setup: None,
     };
     world.switch(cx, entry);
+    // A send reads the setup file again (#1055): this world's is the example
+    // workspace, with the levels the example gives its entries.
+    let workspace = world.view.read_with(cx, |pilot, cx| {
+        pilot.settings_page.read(cx).workspace().clone()
+    });
+    let file = world.dir.path().join("freshkube.yaml");
+    // Only what the level needs: the example entries carry connection settings a
+    // setup file would validate away, and a skipped row is a gone entry.
+    let clusters: Vec<_> = workspace
+        .clusters
+        .iter()
+        .map(|entry| {
+            serde_json::json!({
+                "id": entry.id,
+                "role": entry.role,
+                "context": entry.context,
+                "protection": entry.protection,
+            })
+        })
+        .collect();
+    let text = serde_json::json!({ "version": 1, "clusters": clusters }).to_string();
+    std::fs::write(&file, text).unwrap();
+    world._setup = Some(cx.update(|cx| crate::mutation::setup_file_under(file, cx)));
     world
 }
 
 impl World {
+    /// Edits the world's setup file as an editor outside the app would: the
+    /// entry `entry` is `level` (`None` breaks the file).
+    fn edit_setup(&self, entry: &str, level: Option<freshkube_core::write::Protection>) {
+        let file = self.dir.path().join("freshkube.yaml");
+        let Some(level) = level else {
+            std::fs::write(&file, "clusters: [[[").unwrap();
+            return;
+        };
+        let mut setup: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&file).unwrap()).unwrap();
+        for row in setup["clusters"].as_array_mut().unwrap() {
+            if row["id"] == entry {
+                row["protection"] = serde_json::json!(level.key());
+            }
+        }
+        std::fs::write(&file, setup.to_string()).unwrap();
+    }
+
     fn switch(&self, cx: &mut TestAppContext, entry: &str) {
         cx.update_window(self.handle, |_, window, cx| {
             self.view.update(cx, |pilot, cx| {
@@ -1459,4 +1503,139 @@ fn the_status_bars_cancel_is_not_shown_while_the_dialog_counts_down(cx: &mut Tes
     w.click(cx, "write-cancel-countdown");
     w.drive(cx, Duration::from_secs(2));
     assert!(w.real_deletes().is_empty());
+}
+
+/// A file edited to `read-only` while the dialog was open is read again at
+/// Confirm at each of the sites that start a write through a live runner
+/// (#1055): the everyday actions, Edit YAML and Delete. Nothing is written.
+#[gpui_kit::test]
+fn safety_g28_an_everyday_action_sends_nothing_when_the_file_went_read_only(
+    cx: &mut TestAppContext,
+) {
+    let w = world(cx, "core-fra");
+    w.press_web(cx, Everyday::Scale);
+    w.drive(cx, Duration::from_millis(500));
+    cx.update_window(w.handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("scale-count", cx);
+        window.press("secondary-a", cx);
+        window.input("7", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    w.click(cx, "scale-review");
+    w.drive(cx, Duration::from_millis(500));
+    assert!(w.present(cx, "write-confirm"));
+    w.edit_setup(
+        "core-fra",
+        Some(freshkube_core::write::Protection::ReadOnly),
+    );
+    w.click(cx, "write-confirm");
+    w.drive(cx, Duration::from_secs(3));
+    assert!(w.cluster.writes().is_empty());
+    assert_eq!(w.replicas(), 2);
+}
+
+#[gpui_kit::test]
+fn safety_g28_an_edit_of_the_yaml_sends_nothing_when_the_file_went_read_only(
+    cx: &mut TestAppContext,
+) {
+    let w = world(cx, "core-fra");
+    w.press_edit(cx, w.live());
+    w.drive(cx, Duration::from_millis(500));
+    assert!(w.present(cx, "write-confirm"));
+    w.edit_setup(
+        "core-fra",
+        Some(freshkube_core::write::Protection::ReadOnly),
+    );
+    w.click(cx, "write-confirm");
+    w.drive(cx, Duration::from_secs(3));
+    assert!(w.cluster.writes().is_empty());
+}
+
+#[gpui_kit::test]
+fn safety_g28_a_delete_sends_nothing_when_the_file_went_read_only(cx: &mut TestAppContext) {
+    let w = world_on(cx, "core-fra", Cluster::with_owned);
+    w.press_pod(cx);
+    w.drive(cx, Duration::from_millis(500));
+    assert!(w.present(cx, "write-confirm"));
+    w.edit_setup(
+        "core-fra",
+        Some(freshkube_core::write::Protection::ReadOnly),
+    );
+    w.click(cx, "write-confirm");
+    w.drive(cx, Duration::from_secs(8));
+    assert!(w.real_deletes().is_empty());
+    assert!(w.cluster.exists(fake::POD));
+}
+
+/// A Stage action pressed on the change page, through the shell's own
+/// `stage_act` (the fourth site that starts a write through a live runner),
+/// on the fake Kargo cluster, up to the point where its dialog asks.
+fn stage_dialog(cx: &mut TestAppContext) -> (World, crate::desktop::stage_acts::TestConnection) {
+    use crate::applications::{ActKind, KargoAt, StageAct};
+    let w = world_on(cx, "core-fra", crate::write_flow::stage_tests::kargo);
+    let connection = crate::desktop::stage_acts::connect_with(w.cluster.client.clone());
+    let change =
+        freshkube_delivery::change::example::for_stage("checkout", "prod-ams", chrono::Utc::now())
+            .unwrap();
+    let act = StageAct {
+        kind: ActKind::Promote,
+        stage: "prod-ams".into(),
+        change: Box::new(change),
+        kargo: KargoAt::Open,
+        kubeconfig: None,
+    };
+    cx.update_window(w.handle, |_, window, cx| {
+        w.view
+            .update(cx, |pilot, cx| pilot.stage_act(&act, window, cx))
+    })
+    .unwrap();
+    cx.run_until_parked();
+    w.drive(cx, Duration::from_millis(500));
+    assert!(w.present(cx, "write-confirm"), "the Promote dialog asks");
+    // The destination (prod-ams) is protected: its name is typed.
+    cx.update_window(w.handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("write-type-name", cx);
+        window.input("prod-ams", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    (w, connection)
+}
+
+/// The Stage action's dialog, a file edited to `read-only` while it is open,
+/// Confirm: nothing is sent to Kargo.
+#[gpui_kit::test]
+fn safety_g28_a_stage_action_through_the_shell_sends_nothing_when_the_file_went_read_only(
+    cx: &mut TestAppContext,
+) {
+    let (w, _connection) = stage_dialog(cx);
+    w.edit_setup(
+        "core-fra",
+        Some(freshkube_core::write::Protection::ReadOnly),
+    );
+    w.click(cx, "write-confirm");
+    w.drive(cx, Duration::from_secs(3));
+    assert!(w.cluster.writes().is_empty());
+}
+
+/// The destination going `read-only` in the file refuses the send too, and
+/// leaves the window's own level alone: the header is not raised for a
+/// cluster the window isn't on.
+#[gpui_kit::test]
+fn a_destination_that_went_read_only_sends_nothing_and_does_not_raise_the_windows_level(
+    cx: &mut TestAppContext,
+) {
+    let (w, _connection) = stage_dialog(cx);
+    let before = cx.read(crate::mutation::level);
+    w.edit_setup(
+        "prod-ams",
+        Some(freshkube_core::write::Protection::ReadOnly),
+    );
+    w.click(cx, "write-confirm");
+    w.drive(cx, Duration::from_secs(3));
+    assert!(w.cluster.writes().is_empty());
+    assert_eq!(cx.read(crate::mutation::level), before);
 }

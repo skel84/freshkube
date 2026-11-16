@@ -19,6 +19,7 @@ mod dialogs;
 mod dry_run;
 mod edit_yaml;
 mod example;
+mod fresh;
 mod identity;
 mod levels;
 mod offer;

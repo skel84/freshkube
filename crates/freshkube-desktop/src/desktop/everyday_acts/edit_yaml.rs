@@ -76,7 +76,7 @@ impl Pilot {
                 }
                 match client {
                     Ok(client) => {
-                        let runner = Arc::new(Runner::new(client, audit, who).following(cell));
+                        let runner = Arc::new(crate::desktop::write_runner::live_runner(client, audit, who, cell, cx));
                         let runtime = this.runtime.clone();
                         // The edit's own write ends the edit: the editor was
                         // based on a version this write has replaced.

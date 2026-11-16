@@ -11,7 +11,7 @@ use crate::write::alertmanager::{
 };
 
 fn runner(fake: &Fake, dir: &std::path::Path, level: Protection, scope: Scope) -> Runner {
-    Runner::new(
+    Runner::unchecked(
         fake.client.clone(),
         AuditStore::new(dir.join("audit")),
         Who {
@@ -388,7 +388,7 @@ async fn safety_g31_a_central_store_without_a_cluster_label_sends_nothing() {
         Block::Refused { .. }
     ));
     // A runner that was never told its scope refuses too.
-    let unscoped = Runner::new(
+    let unscoped = Runner::unchecked(
         fake.client.clone(),
         AuditStore::new(dir.path().join("audit2")),
         runner.who().clone(),
@@ -425,7 +425,7 @@ async fn safety_g31_an_expire_without_a_scope_or_cluster_label_sends_nothing() {
         blocked(labelless.preflight(expire()).await),
         Block::Refused { .. }
     ));
-    let unscoped = Runner::new(
+    let unscoped = Runner::unchecked(
         fake.client.clone(),
         AuditStore::new(dir.path().join("audit2")),
         labelless.who().clone(),
