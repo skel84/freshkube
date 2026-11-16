@@ -170,6 +170,9 @@ pub enum Refusal {
     NoMatchers,
     TooManyMatchers,
     EmptyName,
+    /// A label name Alertmanager's filter and API would read as something
+    /// else: only letters, digits and underscores, not starting with a digit.
+    BadName(String),
     /// A matcher with an empty value, which matches alerts that lack the
     /// label as well.
     EmptyValue(String),
@@ -189,6 +192,7 @@ impl Refusal {
             Self::NoMatchers => "A silence needs at least one matcher".into(),
             Self::TooManyMatchers => format!("A silence takes at most {MAX_MATCHERS} matchers"),
             Self::EmptyName => "A matcher needs a label name".into(),
+            Self::BadName(name) => format!("{name} isn't a label name"),
             Self::EmptyValue(name) => format!("The matcher on {name} has no value"),
             Self::ValueTooLong(name) => {
                 format!("The matcher on {name} is longer than {MAX_VALUE} characters")
@@ -200,6 +204,15 @@ impl Refusal {
             Self::DurationTooLong => "A silence lasts at most 24 h".into(),
         }
     }
+}
+
+/// A Prometheus label name.
+fn is_label_name(name: &str) -> bool {
+    let mut chars = name.chars();
+    chars
+        .next()
+        .is_some_and(|first| first.is_ascii_alphabetic() || first == '_')
+        && chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
 }
 
 /// A regex that selects every value, written the ways people write it.
@@ -225,6 +238,9 @@ pub fn validate(draft: &Draft) -> Result<(), Refusal> {
     for matcher in &draft.matchers {
         if matcher.name.trim().is_empty() {
             return Err(Refusal::EmptyName);
+        }
+        if !is_label_name(&matcher.name) {
+            return Err(Refusal::BadName(matcher.name.clone()));
         }
         if matcher.name.chars().count() > MAX_VALUE || matcher.value.chars().count() > MAX_VALUE {
             return Err(Refusal::ValueTooLong(matcher.name.clone()));

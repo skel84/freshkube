@@ -16,6 +16,9 @@
 pub mod silence;
 pub mod writer;
 
+#[cfg(any(test, feature = "testing"))]
+pub mod testing;
+
 #[cfg(test)]
 mod tests;
 
@@ -24,6 +27,7 @@ pub use silence::{
     MIN_DURATION, Mode, PROTECTED_CAP, Reason, Refusal, classify, validate,
 };
 pub use writer::{
-    AlertWriter, CreateRequest, MAX_PREVIEW_ALERTS, MAX_PREVIEW_BYTES, Muted, Preview,
-    PreviewedAlert, ReadBack, WriteError,
+    AlertWriter, CREATED_BY_PREFIX, CreateRequest, MAX_PREVIEW_ALERTS, MAX_PREVIEW_BYTES,
+    MAX_PREVIEW_LISTED, Muted, Preview, PreviewedAlert, REQUEST_TIMEOUT, ReadBack, WriteError,
+    access_question, find_landed,
 };
