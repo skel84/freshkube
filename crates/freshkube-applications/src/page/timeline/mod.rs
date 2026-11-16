@@ -50,7 +50,7 @@ pub struct CorootFeed {
 }
 
 /// Which provider (the connection) an Incidents read went over.
-type IncidentIdentity = (String, u32, Option<api::ProviderId>);
+type IncidentIdentity = (String, u32, Option<api::ProviderId>, String);
 
 /// Where the tab's sources come from.
 #[derive(Clone)]
@@ -79,11 +79,16 @@ impl Fetch {
         match self {
             Self::Example { shape, .. } => format!("example/{shape:?}/{app}"),
             Self::Live {
-                source_id,
-                place,
-                coroot,
-                ..
-            } => live_identity(source_id, app, place, &coroot.link),
+                source_id, place, ..
+            } => live_identity(source_id, app, place),
+        }
+    }
+
+    /// Coroot's link as text, for telling whether it moved.
+    fn coroot_link(&self) -> String {
+        match self {
+            Self::Example { .. } => String::new(),
+            Self::Live { coroot, .. } => format!("{:?}", coroot.link),
         }
     }
 
@@ -96,13 +101,8 @@ impl Fetch {
 }
 
 /// Which connection, application and workloads a live read is for.
-fn live_identity(
-    source_id: &str,
-    app: &str,
-    place: &Place,
-    link: &Result<api::Link, Absent>,
-) -> String {
-    format!("{source_id}/{app}/{place:?}/{link:?}")
+fn live_identity(source_id: &str, app: &str, place: &Place) -> String {
+    format!("{source_id}/{app}/{place:?}")
 }
 
 /// One line of the list as the table draws it.
@@ -141,6 +141,8 @@ pub struct TimelineView {
     incidents: Loader<SourceRead, IncidentIdentity>,
     /// Hears Observability's connection start, finish or drop.
     connection: Option<Subscription>,
+    /// Takes this tab's want of Coroot back when it is dropped.
+    _release: Subscription,
     hours: u32,
     /// The time example data is dated from: taken at its first read and
     /// kept, so a window or a refresh doesn't date it again and pass old
@@ -174,7 +176,16 @@ impl TimelineView {
         let mut incidents = Loader::default();
         incidents.set_visible(false, ON_SHOW, cx);
         let (columns, width) = table::columns(&[]);
+        let id = cx.entity_id();
+        let release = cx.on_release(move |this: &mut Self, cx| {
+            if let Fetch::Live { coroot, .. } = &this.fetch
+                && let Some(reader) = &coroot.reader
+            {
+                reader.want(id, false, cx);
+            }
+        });
         let mut this = Self {
+            _release: release,
             app: app.to_owned().into(),
             fetch,
             loader,
@@ -234,8 +245,18 @@ impl TimelineView {
     /// answer is forgotten and read again if shown.
     pub(super) fn set_fetch(&mut self, fetch: Fetch, cx: &mut Context<Self>) {
         if fetch.identity(&self.app) == self.fetch.identity(&self.app) {
+            // Only Coroot's link may differ: the cluster read stands, and
+            // Coroot is asked again over the new one.
+            let moved = fetch.coroot_link() != self.fetch.coroot_link();
             self.fetch = fetch;
             self.follow_connection(cx);
+            if moved {
+                self.incidents.reset();
+                self.derive(cx);
+                if self.visible {
+                    self.read_incidents(cx);
+                }
+            }
             return;
         }
         self.want_coroot(false, cx);
@@ -372,30 +393,31 @@ impl TimelineView {
             .reader
             .as_ref()
             .and_then(|reader| reader.connection(cx));
-        let identity = (base, hours, connection.as_ref().map(|c| c.id()));
+        let identity = (
+            base,
+            hours,
+            connection.as_ref().map(|c| c.id()),
+            format!("{:?}", coroot.link),
+        );
         let link = match (&coroot.link, &connection) {
             (Ok(link), Some(_)) => link.clone(),
             (Err(absent), _) => {
                 return self.settle_incidents(
                     identity,
-                    &from,
-                    "",
-                    &place,
+                    (&from, "", &place),
                     Err(absent.clone()),
-                    now,
-                    hours,
+                    (now, hours),
+                    cx,
                 );
             }
             (Ok(link), None) => {
                 let cluster = link.cluster().to_owned();
                 return self.settle_incidents(
                     identity,
-                    &from,
-                    &cluster,
-                    &place,
+                    (&from, &cluster, &place),
                     Err(Absent::NotConnected),
-                    now,
-                    hours,
+                    (now, hours),
+                    cx,
                 );
             }
         };
@@ -430,19 +452,18 @@ impl TimelineView {
     }
 
     /// Answers the Incidents read without asking Coroot: it can't be asked.
-    #[allow(clippy::too_many_arguments)]
     fn settle_incidents(
         &mut self,
         identity: IncidentIdentity,
-        from: &str,
-        cluster: &str,
-        place: &Place,
+        (from, cluster, place): (&str, &str, &Place),
         sample: Result<Vec<api::Incident>, Absent>,
-        now: i64,
-        hours: u32,
+        (now, hours): (i64, u32),
+        cx: &mut Context<Self>,
     ) {
         let read = incidents::read(from, cluster, &place.workloads, sample, now, hours);
         self.incidents.resolve(identity, Ok(read));
+        self.derive(cx);
+        cx.notify();
     }
 
     /// An answer, published only while it is the one in flight. A read that
@@ -620,6 +641,14 @@ impl TimelineView {
             .collect()
     }
 
+    /// Observability's connection changed, as it tells the tab: Coroot is
+    /// asked again if the tab shows.
+    pub fn coroot_connection_changed(&mut self, cx: &mut Context<Self>) {
+        if self.visible {
+            self.read_incidents(cx);
+        }
+    }
+
     /// Reads again now.
     pub fn refresh_now(&mut self, cx: &mut Context<Self>) {
         self.refresh(cx);
@@ -665,9 +694,7 @@ mod tests {
             )],
             ..Default::default()
         };
-        let key = |source: &str, place: &Place| {
-            super::live_identity(source, "checkout", place, &Err(super::Absent::NotLinked))
-        };
+        let key = |source: &str, place: &Place| super::live_identity(source, "checkout", place);
         let base = key("conn-a", &place("api", 1));
         assert_ne!(base, key("conn-b", &place("api", 1)), "another connection");
         assert_ne!(
@@ -686,13 +713,6 @@ mod tests {
         let mut kargo = place("api", 1);
         kargo.kargo = vec!["checkout".into()];
         assert_ne!(base, key("conn-a", &kargo), "a Kargo Project");
-        let moved = super::live_identity(
-            "conn-a",
-            "checkout",
-            &place("api", 1),
-            &Err(super::Absent::NoProject),
-        );
-        assert_ne!(base, moved, "another Coroot link");
     }
 
     #[test]

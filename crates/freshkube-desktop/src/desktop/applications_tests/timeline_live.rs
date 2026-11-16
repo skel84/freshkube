@@ -125,6 +125,8 @@ fn live(
     elsewhere: usize,
     projects: &[&str],
 ) -> Setup {
+    // The reads answer from a Tokio worker thread.
+    cx.executor().allow_parking();
     let (runtime, handle, view) = open(cx, 1280., 880., Shape::Busy);
     show_timeline(cx, handle);
     let (client, recorder) = {
@@ -371,6 +373,7 @@ fn incidents_from_an_unreachable_coroot_are_not_read(cx: &mut TestAppContext) {
 
 #[gpui_kit::test]
 fn incidents_without_a_connection_are_not_read_and_ask_nothing(cx: &mut TestAppContext) {
+    cx.executor().allow_parking();
     let (_runtime, handle, view) = open(cx, 1280., 880., Shape::Busy);
     show_timeline(cx, handle);
     let script = Script::new();
@@ -441,10 +444,68 @@ fn the_incidents_read_drops_on_hide_and_on_a_new_window(cx: &mut TestAppContext)
     .unwrap();
     cx.run_until_parked();
     assert!(setup.script.incidents_dropped(1));
+    assert_eq!(setup.script.wanting(), 0, "hidden, it wants nothing");
     cx.executor().advance_clock(Duration::from_secs(120));
     cx.run_until_parked();
     assert_eq!(setup.script.incidents_asked(), 2);
     // Showing it again reads once what it has is old.
     show_timeline(cx, setup.handle);
     assert_eq!(setup.script.incidents_asked(), 3);
+}
+
+#[gpui_kit::test]
+fn a_connection_that_drops_while_the_tab_shows_turns_the_chip_to_not_read(cx: &mut TestAppContext) {
+    let setup = live(
+        cx,
+        Kargo::Items(Vec::new()),
+        link(Some("shop")),
+        0,
+        &["checkout"],
+    );
+    answer(&setup, cx, Ok(vec![incident(OURS, 900)]));
+    assert_eq!(
+        chip(&setup, cx, "Incidents"),
+        "Incidents 1 · latest state only"
+    );
+    // Coroot drops; Observability tells the tab.
+    setup.script.set_connected(false);
+    cx.update_window(setup.handle, |_, window, cx| {
+        timeline(&setup.view, cx).update(cx, |t, cx| t.coroot_connection_changed(cx));
+        window.render_frame(cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    assert!(chip(&setup, cx, "Incidents").ends_with("not read: Coroot isn't connected"));
+    assert_eq!(setup.script.incidents_asked(), 1);
+}
+
+#[gpui_kit::test]
+fn a_context_change_drops_the_incidents_read_in_flight(cx: &mut TestAppContext) {
+    let setup = live(
+        cx,
+        Kargo::Items(Vec::new()),
+        link(Some("shop")),
+        0,
+        &["checkout"],
+    );
+    assert_eq!(setup.script.incidents_asked(), 1);
+    assert_eq!(setup.script.wanting(), 1);
+    // Another source while Coroot is still answering.
+    cx.update_window(setup.handle, |_, _, cx| {
+        timeline(&setup.view, cx).update(cx, |t, cx| t.use_example(Shape::NoneRead, cx));
+    })
+    .unwrap();
+    cx.run_until_parked();
+    assert!(setup.script.incidents_dropped(0));
+    assert!(
+        !setup
+            .script
+            .answer_incidents(0, Ok(vec![incident(OURS, 60)]))
+    );
+    // The tab wants Coroot connected only for a live read.
+    assert!(
+        chips(&setup.view, cx)
+            .iter()
+            .all(|c| !c.starts_with("Incidents 1"))
+    );
 }
