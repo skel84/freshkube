@@ -111,6 +111,61 @@ fn the_switcher_retargets_the_shown_tab_and_keeps_its_page(cx: &mut TestAppConte
     assert_eq!(cx.read(|cx| pilot.read(cx).navigation.page), Page::Nodes);
 }
 
+/// Right-click on a cluster row offers "Open in new tab", which does what
+/// ⌘-click does: a new tab bound to that cluster, the shown tab left alone.
+#[gpui_kit::test]
+fn right_click_on_a_cluster_row_opens_it_in_a_new_tab(cx: &mut TestAppContext) {
+    let (_runtime, handle, pilot) = on_dev(cx);
+    let ix = cx.read(|cx| {
+        pilot
+            .read(cx)
+            .switch
+            .switcher
+            .iter()
+            .position(|item| item.id.as_ref() == "prod-ams")
+            .expect("the example lists prod-ams")
+    });
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("context-switcher", cx);
+        window.render_frame(cx);
+        window.right_click(("cluster", ix), cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    // Opening the menu changes nothing by itself.
+    assert_eq!(entries(cx, &pilot), [Some("dev-fra".to_owned())]);
+    // The row holds its tooltip while its menu is open, so the tooltip
+    // cannot cover the menu's entry.
+    assert_eq!(
+        cx.read(|cx| pilot.read(cx).context_display.menu_cluster.clone()),
+        Some("prod-ams".to_owned())
+    );
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.within("popup-menu").click(0usize, cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    assert_eq!(
+        entries(cx, &pilot),
+        [Some("dev-fra".to_owned()), Some("prod-ams".to_owned())]
+    );
+    assert_eq!(active(cx, &pilot), SessionKey::Entry("prod-ams".into()));
+    assert!(!cx.has_pending_prompt());
+    assert_eq!(
+        cx.read(|cx| pilot.read(cx).context_display.menu_cluster.clone()),
+        None
+    );
+    // The switcher closed and the page has the keyboard, as after ⌘-click.
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(window.try_find(("cluster", ix)).is_none());
+        assert!(pilot.read(cx).focus.is_focused(window));
+    })
+    .unwrap();
+}
+
 #[gpui_kit::test]
 fn a_new_cluster_tab_activates_its_entry_and_selecting_back_asks_nothing(cx: &mut TestAppContext) {
     let (_runtime, handle, pilot) = on_dev(cx);

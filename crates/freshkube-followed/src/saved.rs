@@ -10,6 +10,7 @@ use std::path::Path;
 use freshkube_prefs::{Dir, Document, Layout};
 use serde::{Deserialize, Serialize};
 
+use crate::banner::Permission;
 use crate::model::{Follow, MAX_FOLLOWS};
 use crate::notice::Settings;
 
@@ -23,6 +24,8 @@ pub struct Saved {
     pub follows: Vec<Follow>,
     pub next_id: u64,
     pub settings: Settings,
+    /// The system's answer about banners; `Asking` is never saved.
+    pub permission: Permission,
 }
 
 /// The document beside `preferences`.
@@ -85,6 +88,7 @@ mod tests {
                 },
                 hide_details: Some(true),
             },
+            permission: Permission::Denied,
         };
         document.save(&saved).expect("saved");
         assert_eq!(load(&document), saved);

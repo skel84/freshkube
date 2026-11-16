@@ -8,6 +8,7 @@ use super::*;
 use format::{plural, time};
 use freshkube_core::databases::coroot::Evidence;
 use freshkube_core::databases::{Coverage, Fact, Identity};
+use freshkube_ui::read_state::ReadState;
 
 const MAX_DETAIL_FIELDS: usize = 128;
 
@@ -156,7 +157,9 @@ pub(super) struct Display {
     pub attention: Option<SharedString>,
     /// One line per kind or operator that was not read completely.
     pub notice: Option<SharedString>,
-    pub empty: SharedString,
+    pub empty: ReadState,
+    /// `empty` as one sentence, for the empty state's label.
+    pub empty_label: SharedString,
     pub columns: (Vec<table::Column>, f32),
     mode: Mode,
     filter: String,
@@ -164,7 +167,13 @@ pub(super) struct Display {
 }
 impl Default for Display {
     fn default() -> Self {
-        Self::new(None, &Evidence::default(), Mode::Clusters, Utc::now())
+        Self::new(
+            None,
+            &Evidence::default(),
+            Mode::Clusters,
+            Utc::now(),
+            "this cluster",
+        )
     }
 }
 
@@ -172,7 +181,7 @@ impl Default for Display {
 fn notices(inv: &Inventory) -> Vec<String> {
     let mut lines = Vec::new();
     if inv.discovery == Coverage::NotServed {
-        lines.push("CloudNativePG and the MariaDB operator: API not served".to_owned());
+        lines.push("CloudNativePG and the MariaDB operator: not installed (optional)".to_owned());
     }
     for (engine, coverage) in &inv.engines {
         if *coverage != Coverage::NotServed && *coverage != Coverage::Complete {
@@ -223,18 +232,49 @@ fn notices(inv: &Inventory) -> Vec<String> {
     lines
 }
 
-fn empty_words(inv: &Inventory, mode: Mode) -> String {
+fn empty_state(inv: &Inventory, mode: Mode, cluster: &str) -> ReadState {
     let coverage = match mode {
         Mode::Clusters => &inv.databases.coverage,
         Mode::Backups => &inv.backups.coverage,
         Mode::Schedules => &inv.schedules.coverage,
     };
+    let what = plural_word(mode).to_owned();
+    let cluster = cluster.to_owned();
     if inv.discovery == Coverage::NotServed {
-        "No database operator is installed (CloudNativePG and MariaDB APIs not served)".into()
+        ReadState::Empty {
+            looked_for: "database operators".into(),
+            cluster,
+            hint: Some(
+                "Databases lists clusters run by CloudNativePG or the MariaDB operator. Both are optional; the rest of Freshkube works without them."
+                    .into(),
+            ),
+        }
     } else if *coverage == Coverage::Complete || *coverage == Coverage::NotServed {
-        format!("No {} found in this scope", plural_word(mode))
+        ReadState::Empty {
+            looked_for: match mode {
+                Mode::Clusters => "database clusters".to_owned(),
+                _ => what,
+            },
+            cluster,
+            hint: None,
+        }
+    } else if *coverage == Coverage::Refused {
+        ReadState::Refused {
+            what,
+            cluster,
+            manifest: None,
+            reason: None,
+        }
+    } else if *coverage == Coverage::Unsupported {
+        ReadState::Unsupported { what, cluster }
+    } else if *coverage == Coverage::Partial {
+        ReadState::Partial { what, cluster }
     } else {
-        format!("{}: {} · contents unknown", mode.label(), coverage.label())
+        ReadState::Unreachable {
+            what,
+            cluster,
+            reason: Some(coverage.label().to_owned()),
+        }
     }
 }
 fn plural_word(mode: Mode) -> &'static str {
@@ -251,13 +291,16 @@ impl Display {
         evidence: &Evidence,
         mode: Mode,
         now: chrono::DateTime<Utc>,
+        cluster: &str,
     ) -> Self {
         let mut rows = Vec::new();
         let mut notice = Vec::new();
-        let mut empty = "Not connected".to_owned();
+        let mut empty = ReadState::NotReadYet {
+            what: "databases".into(),
+        };
         if let Some(inv) = inventory {
             notice = notices(inv);
-            empty = empty_words(inv, mode);
+            empty = empty_state(inv, mode, cluster);
             rows = match mode {
                 Mode::Clusters => cluster::rows(inv, evidence, now),
                 Mode::Backups => other::backups(inv),
@@ -278,7 +321,14 @@ impl Display {
             summary: SharedString::default(),
             attention: None,
             notice: (!notice.is_empty()).then(|| notice.join(" · ").into()),
-            empty: empty.into(),
+            empty_label: {
+                let mut label = format!("{}. {}", empty.title(), empty.description());
+                if let Some(reason) = empty.reason() {
+                    label = format!("{label} {reason}");
+                }
+                label.into()
+            },
+            empty,
             columns: (Vec::new(), 0.),
             mode,
             filter: String::new(),

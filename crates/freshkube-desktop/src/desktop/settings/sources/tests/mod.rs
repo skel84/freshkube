@@ -144,7 +144,7 @@ fn dispatch_pin_from_menu(
                     action,
                     enabled: true,
                     ..
-                } if label.as_ref() == "Follow roles" => Some(action),
+                } if label.as_ref() == "Choose automatically" => Some(action),
                 _ => None,
             })
             .unwrap()

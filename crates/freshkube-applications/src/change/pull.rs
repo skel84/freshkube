@@ -4,14 +4,19 @@
 //! hide drops the read and its delivery, and a late answer is checked
 //! against its request and its key before it lands. The list never starts
 //! it.
+use std::collections::HashMap;
+use std::path::PathBuf;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use freshkube_core::job as backend;
+use freshkube_delivery::github::avatars::Avatars;
 use freshkube_delivery::github::{
-    ChecksState, DetailKey, PullDetail, ReviewState, example_detail, example_identity,
+    AvatarUrl, DetailKey, PullDetail, example_detail, example_identity,
 };
 use freshkube_reads::{Loader, OnShow};
 
+use super::pull_card::{self, Known, PullCard, Reading};
 use super::*;
 
 /// A card read this old is read again: when the page shows, and when the
@@ -37,24 +42,42 @@ pub(super) struct Card {
     /// start.
     failures: u32,
     retry_after: Option<Instant>,
-    /// The placeholder row: its text, its words for assistive technology
-    /// and its tone, derived when the read changes.
-    line: Option<Line>,
+    /// Whether the app has a client for GitHub at all, as of the last read.
+    no_client: bool,
+    /// The card's words, derived when the read or the change changes.
+    card: Option<PullCard>,
+    /// Avatars on disk for the people on the card, and the one job that
+    /// fetches what is missing; dropped with the card and on hide.
+    avatars: HashMap<AvatarUrl, PathBuf>,
+    /// The avatars asked for for this card, so none is asked for twice.
+    avatars_tried: std::collections::HashSet<AvatarUrl>,
+    avatar_job: Option<(backend::OwnedJob, Task<()>)>,
 }
 
+/// The app's folder of avatars, installed once by the shell for a live
+/// session. Example data installs none, so a fixture never reaches GitHub's
+/// avatar host and draws initials.
 #[derive(Clone)]
-pub(super) struct Line {
-    pub text: SharedString,
-    /// The same without its secondary parts (reviews, checks), for a short
-    /// window where the banner must fit whole (#981). What can't be read, or
-    /// is old, stays: it is not secondary.
-    pub short: SharedString,
-    pub tone: Tone,
+struct AvatarCache(Arc<Avatars>);
+
+impl gpui_kit::Global for AvatarCache {}
+
+/// Keeps avatars in `dir` from now on. A folder that can't be had leaves the
+/// card with initials.
+pub fn install_avatar_folder(dir: PathBuf, cx: &mut App) {
+    if let Ok(avatars) = Avatars::new(dir) {
+        cx.set_global(AvatarCache(Arc::new(avatars)));
+    }
 }
 
 impl Card {
-    pub(super) fn line(&self) -> Option<&Line> {
-        self.line.as_ref()
+    pub(super) fn card(&self) -> Option<&PullCard> {
+        self.card.as_ref()
+    }
+
+    /// The avatar's file, if it is on disk.
+    pub(super) fn avatar_path(&self, avatar: &AvatarUrl) -> Option<PathBuf> {
+        self.avatars.get(avatar).cloned()
     }
 
     fn forget(&mut self) {
@@ -91,80 +114,20 @@ impl Card {
     }
 }
 
-/// What the reviews say, all of them: `1 approved, 1 asked for changes, 2
-/// commented, 1 dismissed`, or `no reviews`; an approval of an older
-/// commit than the head says so.
-fn reviews_words(detail: &PullDetail) -> String {
-    let head = detail.summary.head.as_deref();
-    let of = |wanted| detail.reviews.iter().filter(move |r| r.state == wanted);
-    let approvals = of(ReviewState::Approved).count();
-    let older = of(ReviewState::Approved)
-        .filter(|review| {
-            matches!((review.commit.as_deref(), head), (Some(given), Some(head)) if given != head)
-        })
-        .count();
-    let mut parts = Vec::new();
-    if approvals > 0 {
-        let note = match older {
-            0 => String::new(),
-            n if n == approvals => " (of an older commit)".to_owned(),
-            n => format!(" ({n} of an older commit)"),
-        };
-        parts.push(format!("{approvals} approved{note}"));
-    }
-    for (state, words) in [
-        (ReviewState::ChangesRequested, "asked for changes"),
-        (ReviewState::Commented, "commented"),
-        (ReviewState::Dismissed, "dismissed"),
-    ] {
-        let count = of(state).count();
-        if count > 0 {
-            parts.push(format!("{count} {words}"));
-        }
-    }
-    let more = if detail.reviews_capped {
-        " (the first 100)"
-    } else {
-        ""
-    };
-    if parts.is_empty() {
-        format!("no reviews{more}")
-    } else {
-        format!("{}{more}", parts.join(", "))
-    }
-}
-
-/// `checks passing (3)`, `100 of 112 checks read, none failing so far`.
-fn checks_words(detail: &PullDetail) -> String {
-    let checks = &detail.checks;
-    let count = checks.runs.len() + checks.statuses.len();
-    let cut = match (checks.capped, checks.statuses_capped) {
-        (Some(cut), _) => Some(format!("{} of {} checks read", cut.read, cut.total)),
-        (None, Some(cut)) => Some(format!("{} of {} statuses read", cut.read, cut.total)),
-        (None, None) => None,
-    };
-    match (checks.state, cut) {
-        (ChecksState::None, _) => "no checks".into(),
-        (ChecksState::Pending, None) => format!("checks pending ({count})"),
-        (ChecksState::Pending, Some(cut)) => format!("{cut}, some still running"),
-        (ChecksState::Failing, None) => format!("checks failing ({count})"),
-        (ChecksState::Failing, Some(cut)) => format!("{cut}, some failing"),
-        (ChecksState::Passing, _) => format!("checks passing ({count})"),
-        (ChecksState::Ended, _) => format!("checks ended without passing ({count})"),
-        (ChecksState::Partial, cut) => format!(
-            "{}, none failing so far",
-            cut.unwrap_or_else(|| format!("{count} checks read"))
-        ),
-    }
-}
-
-/// Whether two commits, as written in full or in part, are one.
-fn same_commit(a: &str, b: &str) -> bool {
-    let (a, b) = (a.to_ascii_lowercase(), b.to_ascii_lowercase());
-    a.starts_with(&b) || b.starts_with(&a)
-}
-
 impl ChangePage {
+    /// Whether the pull request's hop is selected and its answer is old: the
+    /// Inspector's header tag is then a warning, by the card's own rule.
+    pub(super) fn pull_is_old(&self) -> bool {
+        self.pull_selected() && self.pull.card().is_some_and(|card| card.old.is_some())
+    }
+
+    /// Whether the selection is the pull request's hop, where the full card
+    /// shows.
+    pub(super) fn pull_selected(&self) -> bool {
+        let pr = self.strip.cards.iter().find(|card| card.id == "pr");
+        matches!((&self.selected, pr), (Some(key), Some(card)) if card.hops.contains(key))
+    }
+
     /// Reads the pull request's detail for the change shown, while the page
     /// shows. What is held is read again when it is over a minute old, with
     /// the old line standing meanwhile; `force` reads whatever is held, and
@@ -174,7 +137,12 @@ impl ChangePage {
             return;
         }
         let Some(summary) = self.change.origin.pull.clone() else {
+            // No pull request was read: the card says what the cluster knows
+            // and, for a live read with no client, that GitHub isn't set up.
             self.pull.forget();
+            self.pull.no_client =
+                matches!(&self.fetch, Fetch::Live { place, .. } if place.github.is_none());
+            self.derive_pull(cx);
             return;
         };
         let now = cx.background_executor().now();
@@ -196,6 +164,8 @@ impl ChangePage {
             Fetch::Live { runtime, place, .. } => {
                 let Some(github) = place.github.clone() else {
                     self.pull.forget();
+                    self.pull.no_client = true;
+                    self.derive_pull(cx);
                     return;
                 };
                 let Some(key) = DetailKey::of(github.identity(), &summary) else {
@@ -261,69 +231,88 @@ impl ChangePage {
         }
     }
 
-    /// The row's words, from what is held.
+    /// The card's words, from what is held.
     fn derive_pull(&mut self, cx: &mut Context<Self>) {
-        let Some(summary) = self.change.origin.pull.as_ref() else {
-            self.pull.line = None;
-            cx.notify();
+        let known = Known {
+            number: self.change.origin.pull_request,
+            commit: self.change.origin.commit.clone(),
+        };
+        let reading = if self.pull.no_client {
+            Reading::NoClient
+        } else if self.pull.read.data().is_none() && self.pull.read.error().is_some() {
+            Reading::Failed
+        } else if self.pull.read.is_loading() && self.pull.read.data().is_none() {
+            Reading::Loading
+        } else if self.pull.read.data().is_some() {
+            Reading::Held
+        } else {
+            Reading::Nothing
+        };
+        let card = pull_card::derive(
+            &known,
+            self.change.origin.pull.as_ref(),
+            self.pull.read.data(),
+            self.pull.read.error(),
+            reading,
+        );
+        // A change with no pull request and nothing known of one has no card.
+        let nothing =
+            known.number.is_none() && self.change.origin.pull.is_none() && !self.pull.no_client;
+        self.pull.card = (!nothing).then_some(card);
+        self.load_avatars(cx);
+        cx.notify();
+    }
+
+    /// Fetches the avatars of the card's people that aren't held yet, in one
+    /// job on the page's own lifetime. The disk is asked inside the job,
+    /// never on the UI thread, and each avatar is tried once per card: a
+    /// failure isn't asked for again until the card is forgotten (the client
+    /// backs it off for five minutes besides). When a job lands, people
+    /// who were added meanwhile get theirs.
+    fn load_avatars(&mut self, cx: &mut Context<Self>) {
+        let (Some(AvatarCache(avatars)), Fetch::Live { runtime, .. }) =
+            (cx.try_global::<AvatarCache>().cloned(), &self.fetch)
+        else {
             return;
         };
-        let name = format!("Pull request #{}", summary.number);
-        // `rest` is every part after the state, `kept` the ones that stay in
-        // a short window.
-        let (rest, kept, tone) = match (self.pull.read.data(), self.pull.read.error()) {
-            (Some(detail), error) => {
-                let mut parts = vec![
-                    detail.summary.state.label().to_owned(),
-                    reviews_words(detail),
-                    checks_words(detail),
-                ];
-                let mut kept = vec![parts[0].clone()];
-                // The checks are the head commit's; say so when that is not
-                // the commit the change deploys.
-                if let (Some(head), Some(deployed)) = (
-                    detail.summary.head.as_deref(),
-                    self.change.origin.commit.as_deref(),
-                ) && !same_commit(head, deployed)
-                {
-                    parts.push("checks are of the head commit, not the deployed one".into());
-                }
-                let tone = match (&detail.stale, error) {
-                    (Some(stale), _) => {
-                        // Why is the banner's to say; the line says only that it is old.
-                        let words = stale.read_words();
-                        parts.push(words.clone());
-                        kept.push(words);
-                        Tone::Warn
-                    }
-                    (None, Some(error)) => {
-                        let words = format!("Couldn't read again: {error}");
-                        parts.push(words.clone());
-                        kept.push(words);
-                        Tone::Warn
-                    }
-                    (None, None) => Tone::Info,
-                };
-                (parts.join(" · "), kept.join(" · "), tone)
-            }
-            (None, Some(error)) => (error.to_owned(), error.to_owned(), Tone::Warn),
-            (None, None) if self.pull.read.is_loading() => (
-                "reading GitHub…".to_owned(),
-                "reading GitHub…".to_owned(),
-                Tone::Info,
-            ),
-            (None, None) => (
-                summary.state.label().to_owned(),
-                summary.state.label().to_owned(),
-                Tone::Info,
-            ),
+        let Some(card) = self.pull.card.as_ref() else {
+            return;
         };
-        self.pull.line = Some(Line {
-            text: format!("{name} · {rest}").into(),
-            short: format!("{name} · {kept}").into(),
-            tone,
+        if !self.visible || self.pull.avatar_job.is_some() {
+            return;
+        }
+        let mut wanted: Vec<AvatarUrl> = Vec::new();
+        for url in card.people.iter().filter_map(|person| person.avatar) {
+            if !wanted.contains(&url) && !self.pull.avatars_tried.contains(&url) {
+                wanted.push(url);
+            }
+        }
+        if wanted.is_empty() {
+            return;
+        }
+        self.pull.avatars_tried.extend(wanted.iter().copied());
+        let size = super::pull_view::AVATAR_PX;
+        let (job, receiver) = backend::spawn_job(runtime, DEADLINE, (), async move {
+            let mut got = Vec::new();
+            for url in wanted {
+                // A fresh file is the answer; an old one is replaced by one
+                // fetch, and stands if that fails.
+                if let Ok(avatar) = avatars.ensure(&url, size).await {
+                    got.push((url, avatar.path));
+                }
+            }
+            Ok::<_, ()>(got)
         });
-        cx.notify();
+        let task = cx.spawn(async move |this, cx| {
+            let got = receiver.await.ok().and_then(Result::ok).unwrap_or_default();
+            _ = this.update(cx, |page, cx| {
+                page.pull.avatar_job = None;
+                page.pull.avatars.extend(got);
+                page.load_avatars(cx);
+                cx.notify();
+            });
+        });
+        self.pull.avatar_job = Some((job, task));
     }
 
     /// The page shows or hides: hidden, the read and its delivery are
@@ -334,6 +323,7 @@ impl ChangePage {
         if visible {
             self.read_pull(reads_again, cx);
         } else {
+            self.pull.avatar_job = None;
             self.derive_pull(cx);
         }
     }
@@ -344,10 +334,10 @@ impl ChangePage {
         self.pull.forget();
     }
 
-    /// The placeholder row's text, for tests.
+    /// The card's second line, for tests.
     #[cfg(any(test, feature = "testing"))]
     pub fn pull_line(&self) -> Option<&str> {
-        self.pull.line().map(|line| line.text.as_ref())
+        self.pull.card().map(|card| card.compact.as_ref())
     }
 
     /// Whether the card's read is in flight, for tests.
@@ -360,116 +350,5 @@ impl ChangePage {
     #[cfg(any(test, feature = "testing"))]
     pub fn pull_key(&self) -> Option<&DetailKey> {
         self.pull.key.as_ref()
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    // Named, not globbed: the page's glob brings in `gpui_kit`'s own `test`.
-    use freshkube_delivery::github::{ChecksState, PullDetail, ReviewState, example_detail};
-
-    use super::{checks_words, reviews_words, same_commit};
-
-    fn example() -> PullDetail {
-        // The example's pull request 418, as GitHub reads it.
-        let change = freshkube_delivery::testing::change(chrono::Utc::now());
-        example_detail(
-            &change.origin.pull.expect("the example's pull request"),
-            None,
-        )
-        .unwrap()
-    }
-
-    #[test]
-    fn every_kind_of_review_is_counted_and_an_old_approval_says_so() {
-        let mut detail = example();
-        assert_eq!(reviews_words(&detail), "1 approved, 1 commented");
-        let head = detail.summary.head.clone();
-        let review = detail.reviews[0].clone();
-        let with = |state: ReviewState, commit: Option<String>| {
-            let mut detail = detail.clone();
-            detail.reviews = vec![freshkube_delivery::github::Review {
-                state,
-                commit,
-                ..review.clone()
-            }];
-            detail
-        };
-        assert_eq!(
-            reviews_words(&with(ReviewState::Commented, head.clone())),
-            "1 commented",
-            "a comment alone is a review, not none"
-        );
-        assert_eq!(
-            reviews_words(&with(ReviewState::Dismissed, head.clone())),
-            "1 dismissed"
-        );
-        assert_eq!(
-            reviews_words(&with(ReviewState::ChangesRequested, head.clone())),
-            "1 asked for changes"
-        );
-        assert_eq!(
-            reviews_words(&with(ReviewState::Approved, Some("f".repeat(40)))),
-            "1 approved (of an older commit)"
-        );
-        detail.reviews.clear();
-        assert_eq!(reviews_words(&detail), "no reviews");
-        detail.reviews_capped = true;
-        assert_eq!(reviews_words(&detail), "no reviews (the first 100)");
-    }
-
-    #[test]
-    fn checks_that_were_not_all_read_never_say_passing() {
-        use freshkube_delivery::github::Capped;
-        let mut detail = example();
-        assert_eq!(checks_words(&detail), "checks passing (3)");
-        for (state, words) in [
-            (ChecksState::None, "no checks"),
-            (ChecksState::Pending, "checks pending (3)"),
-            (ChecksState::Failing, "checks failing (3)"),
-            (ChecksState::Ended, "checks ended without passing (3)"),
-            (ChecksState::Partial, "3 checks read, none failing so far"),
-        ] {
-            detail.checks.state = state;
-            assert_eq!(checks_words(&detail), words);
-        }
-        detail.checks.capped = Some(Capped {
-            read: 100,
-            total: 112,
-        });
-        for (state, words) in [
-            (
-                ChecksState::Partial,
-                "100 of 112 checks read, none failing so far",
-            ),
-            (
-                ChecksState::Pending,
-                "100 of 112 checks read, some still running",
-            ),
-            (ChecksState::Failing, "100 of 112 checks read, some failing"),
-        ] {
-            detail.checks.state = state;
-            assert_eq!(checks_words(&detail), words);
-        }
-        detail.checks.capped = None;
-        detail.checks.statuses_capped = Some(Capped {
-            read: 30,
-            total: 41,
-        });
-        detail.checks.state = ChecksState::Partial;
-        assert_eq!(
-            checks_words(&detail),
-            "30 of 41 statuses read, none failing so far"
-        );
-    }
-
-    #[test]
-    fn a_commit_written_in_part_is_the_commit_it_starts() {
-        assert!(same_commit(
-            "a1f3c9e",
-            &format!("a1f3c9e{}", "0".repeat(33))
-        ));
-        assert!(same_commit("A1F3C9E0", "a1f3c9e"));
-        assert!(!same_commit("a1f3c9e", "b1f3c9e"));
     }
 }

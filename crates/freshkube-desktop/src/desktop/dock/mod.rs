@@ -1406,6 +1406,14 @@ impl Dock {
         self.open_logs_for(origin, LogsRequest { target, at }, window, cx);
     }
 
+    /// Whether the dock's source is an example cluster, with no real
+    /// connection behind it.
+    pub(crate) fn shows_example(&self) -> bool {
+        self.source
+            .as_ref()
+            .is_some_and(|source| matches!(source.access, ClusterAccess::Example(_)))
+    }
+
     /// The cluster a tab opened now would capture.
     fn current_origin(&self) -> Option<Origin> {
         let source = self.source.clone()?;

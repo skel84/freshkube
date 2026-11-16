@@ -69,15 +69,18 @@ Read by: debug and stress builds. With `--fixture`, reshapes the Applications ex
 - `causes`: `checkout`'s change page gives all four causes of an Unknown at once (Waiting on prod-ams's gates, Can't read on its pods, Not found on the policy, Not set up on the stage Application).
 - `destination`: the destination `dev-fra` unreachable.
 - `failed`: no cluster answering.
-- `github-limited`: GitHub's pull requests not readable because the rate limit is reached; the pull requests read before are kept, marked stale, and Waiting to ship also shows its two newest as `not read (rate limit)`; on the change page the pull request line (`Pull request #418 · Merged · …`) reads as kept and stale.
-- `github-offline`: GitHub's pull requests not readable because it gives no answer; the pull requests read before are kept, marked stale, and the change page's pull request line reads as kept and stale.
-- `github-refused`: GitHub's pull requests not readable because the token is refused, so none is shown and the change page's pull request line reads as refused.
+- `github-limited`: GitHub's pull requests not readable because the rate limit is reached; the pull requests read before are kept, marked stale, and Waiting to ship also shows its two newest as `not read (rate limit)`; on the change page the pull request card reads as kept and stale (a warning tone and `stale, read at …` in its compact line).
+- `github-offline`: GitHub's pull requests not readable because it gives no answer; the pull requests read before are kept, marked stale, and the change page's pull request card reads as kept and stale.
+- `github-refused`: GitHub's pull requests not readable because the token is refused, so none is shown and the change page's pull request card says `Not read`, with the token refusal in the banner of what may be missing.
+- `github-title`: with no token the pull request's number came from the `(#418)` that ends the commit's title, and that pull request was read directly: the change page's card link says `Open on GitHub (number from the commit title)` and a note says so.
 - `image-only`: `checkout`'s Freight names an image and no commit, so its build is joined by the image digest.
 - `not-found`: Argo CD's namespace not found.
 - `outcome-<name>`: every Deployment hop of the change page shows one outcome of what Coroot found after its deploy (`found`, `ends-early`, `no-revision`, `no-application`, `no-project`, `no-connection`, `not-linked`, `no-project-for-entry`, `refused`, `refused-window`, `no-data`, `failed`, `not-deployment`, `not-looked`, `stale`; `applications/change/outcome/example.rs`), where the other shapes show what Coroot's example keeps for the hop's hash.
 - `partial`: Kargo refused in `cicd-fra`.
 - `promoting`: a Promotion of `wonky-otter` to `prod-ams` is running, made by someone else, so that Stage's Promote is Abort promotion (the Stage actions' dialogs open in every shape, with a runner that sends nothing).
 - `refused`: every source refused.
+- `rollback-none`: no Stage has an earlier Freight in its history, so Roll back… is greyed out and says so.
+- `rollback-unknown`: no earlier Freight of any Stage has a successful verification recorded, so the Roll back… lines offer a pick and never the main action, and the dialog says it isn't verified.
 - `single`: `core-fra` alone.
 - `spread`: Argo CD found in five namespaces with two past the cap.
 - `stages`: `checkout`'s Stages not answering.
@@ -201,6 +204,7 @@ Read by: debug and stress builds. Keeps example data from answering so pages sta
 
 Read by: debug and stress builds. With `--fixture`, seeds the followed items and the bell; without it a follow plays a small story.
 
+- `banners`: the system allows banners (a scripted sink; the system shows nothing), so Settings › Notifications says Allowed.
 - `bell`: three follows with New and Earlier.
 - `full`: the 20 follows so the next is refused.
 - `grouped`: three landings told in a row, the first at once and the other two as one notice when the 2-minute window ends.
@@ -314,6 +318,7 @@ Read by: debug and stress builds. With `--fixture`, opens the view tabs on inven
 
 - `clusters`: three tabs each bound to another example cluster (`dev-fra`, `prod-ams`, `stage-fra`, so the strip shows the "cluster ·" prefix, each level's glyph and the caps).
 - `missing`: a second tab bound to an entry the file does not list (a dashed ring and "Choose a cluster").
+- `shell-other`: starts a shell on a running pod of `dev-fra` (open), then shows `stage-fra` (read-only): the shell keeps running and the dock tab's header names `dev-fra` and says "Not the shown cluster: you're looking at stage-fra".
 
 ## `FRESHKUBE_TEAM`
 

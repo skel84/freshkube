@@ -30,8 +30,10 @@ mod fixbar_tests;
 mod outcome;
 mod overview;
 mod pull;
+mod pull_card;
 #[cfg(test)]
 mod pull_tests;
+mod pull_view;
 pub(crate) mod read;
 mod results;
 pub(crate) mod table;
@@ -68,6 +70,7 @@ pub use changes::Changes;
 pub use changes::LiveChanges;
 pub use outcome::{Coroot, Kind as OutcomeKind, Links, Live, Mark};
 pub(crate) use outcome::{Identity, Key, SessionMemo, Summary, session_memo};
+pub use pull::install_avatar_folder;
 pub(super) use read::Fetch;
 
 /// The page's id prefix: `change-title`, `change-hop-<key>`, `change-detail`.
@@ -408,6 +411,10 @@ pub struct ChangePage {
     copied: bool,
     /// The hop whose access request Copy access request has copied.
     copied_request: Option<SharedString>,
+    /// An action button was pressed: the buttons hold their tooltips until
+    /// the pointer moves on this page again, so a tooltip never stays drawn
+    /// over the dialog the press opened (as the cluster row's does, #878).
+    tips_held: bool,
     connections: Connections,
     pub rows: Vec<HopRow>,
     pub groups: Vec<GroupLine>,
@@ -433,6 +440,8 @@ pub struct ChangePage {
     /// filter or the loading state moved.
     matrix_stale: std::cell::Cell<bool>,
     matrix_loading: std::cell::Cell<bool>,
+    /// Whether the matrix was last drawn with the keyboard ring.
+    matrix_ring: std::cell::Cell<bool>,
     table: TableState,
     focus: FocusHandle,
     split: InspectorSplit,
@@ -483,7 +492,7 @@ impl ChangePage {
         stage: Option<&str>,
         connections: Connections,
         visible: bool,
-        window: &Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
         let loading = kit::LoadingRows::new(PREFIX);
@@ -502,6 +511,7 @@ impl ChangePage {
             page_link: page_link(&change),
             copied: false,
             copied_request: None,
+            tips_held: false,
             change,
             fetch,
             loader,
@@ -531,6 +541,7 @@ impl ChangePage {
             compact: std::cell::Cell::new(table::Width::Full),
             matrix_stale: std::cell::Cell::new(true),
             matrix_loading: std::cell::Cell::new(false),
+            matrix_ring: std::cell::Cell::new(false),
             table: TableState::new(PREFIX),
             focus: cx.focus_handle(),
             split: InspectorSplit::new(PREFIX, cx).stacked(STACKED),
@@ -554,6 +565,18 @@ impl ChangePage {
             stage_offers: Vec::new(),
             _offer_watch: offer_watch,
         };
+        // The matrix's keyboard ring follows the page's focus.
+        let focus = page.focus.clone();
+        cx.on_focus_in(&focus, window, |page, _, cx| {
+            page.matrix_stale.set(true);
+            cx.notify();
+        })
+        .detach();
+        cx.on_focus_out(&focus, window, |page, _, _, cx| {
+            page.matrix_stale.set(true);
+            cx.notify();
+        })
+        .detach();
         if visible {
             page.read(Some(window), cx);
         }

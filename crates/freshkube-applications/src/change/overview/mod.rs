@@ -49,11 +49,11 @@ impl ChangePage {
     /// Only when something it shows moved: the change, its marks, the
     /// selection, the filter or the loading state. A frame that moved none
     /// of them does nothing here.
-    fn sync_matrix(&self, cx: &mut Context<Self>) {
+    fn sync_matrix(&self, ring: bool, cx: &mut Context<Self>) {
         let loading_now = self.loading_rows().is_some();
-        if !self.matrix_stale.replace(false)
-            && self.matrix_loading.replace(loading_now) == loading_now
-        {
+        let stale = self.matrix_stale.replace(false);
+        let ring_moved = self.matrix_ring.replace(ring) != ring;
+        if !stale && !ring_moved && self.matrix_loading.replace(loading_now) == loading_now {
             return;
         }
         self.matrix_loading.set(loading_now);
@@ -77,7 +77,7 @@ impl ChangePage {
             .collect();
         let freight = self.change.freight.as_str();
         self.matrix.update(cx, |matrix, _| {
-            matrix.set(freight, &rows, selected, loading)
+            matrix.set(freight, &rows, selected, ring, loading)
         });
     }
 
@@ -86,7 +86,7 @@ impl ChangePage {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        self.sync_matrix(cx);
+        self.sync_matrix(self.focus.is_focused(window), cx);
         let strip = if self.loading_rows().is_some() {
             self.render_strip_loading(window, cx)
         } else {
