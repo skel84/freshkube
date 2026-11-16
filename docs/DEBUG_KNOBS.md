@@ -62,7 +62,7 @@ Read by: debug and stress builds. With `--fixture`, reshapes the Alerts, Rules a
 
 ## `FRESHKUBE_APPLICATIONS`
 
-Read by: debug and stress builds. With `--fixture`, reshapes the Applications example. `unreachable`, `argo-refused`, `destination`, `image-only` and the three `github-` shapes reshape the change page and the Changes list too (delivery's `change::example::Shape`). The shapes that leave something unread show it in the banner of what may be missing, with the reason.
+Read by: debug and stress builds. With `--fixture`, reshapes the Applications example. `unreachable`, `argo-refused`, `destination`, `image-only` and the three `github-` shapes reshape the change page and the Changes list too (delivery's `change::example::Shape`); `causes`, `promoting`, `rollback-unknown`, `rollback-none`, `rollouts` and `rollouts-states` reshape the change page only. The shapes that leave something unread show it in the banner of what may be missing, with the reason.
 
 - `argo-refused`: Argo CD refused in `core-fra`.
 - `capped`: Argo CD's Applications capped.
@@ -74,13 +74,17 @@ Read by: debug and stress builds. With `--fixture`, reshapes the Applications ex
 - `github-refused`: GitHub's pull requests not readable because the token is refused, so none is shown and the change page's pull request card says `Not read`, with the token refusal in the banner of what may be missing.
 - `github-title`: with no token the pull request's number came from the `(#418)` that ends the commit's title, and that pull request was read directly: the change page's card link says `Open on GitHub (number from the commit title)` and a note says so.
 - `image-only`: `checkout`'s Freight names an image and no commit, so its build is joined by the image digest.
+- `not-expected`: the same change as `prod-lon-not-found`, with `delivery.applications` saying `checkout` isn't expected in `prod-lon`: what wasn't found there is Not used here, dim and counted nowhere (the Next step column is Not used here on that Stage too).
 - `not-found`: Argo CD's namespace not found.
 - `outcome-<name>`: every Deployment hop of the change page shows one outcome of what Coroot found after its deploy (`found`, `ends-early`, `no-revision`, `no-application`, `no-project`, `no-connection`, `not-linked`, `no-project-for-entry`, `refused`, `refused-window`, `no-data`, `failed`, `not-deployment`, `not-looked`, `stale`; `applications/change/outcome/example.rs`), where the other shapes show what Coroot's example keeps for the hop's hash.
 - `partial`: Kargo refused in `cicd-fra`.
+- `prod-lon-not-found`: `prod-lon`'s Application, Rollout and pods weren't found, so those cells read Not found (can't be told from a real gap until the setup says otherwise).
 - `promoting`: a Promotion of `wonky-otter` to `prod-ams` is running, made by someone else, so that Stage's Promote is Abort promotion (the Stage actions' dialogs open in every shape, with a runner that sends nothing).
 - `refused`: every source refused.
 - `rollback-none`: no Stage has an earlier Freight in its history, so Roll back… is greyed out and says so.
 - `rollback-unknown`: no earlier Freight of any Stage has a successful verification recorded, so the Roll back… lines offer a pick and never the main action, and the dialog says it isn't verified.
+- `rollouts`: the change page's Next step column shows each state: `dev` Done, `stage` Step 2 of 4, `prod-ams` Not reached, and `prod-lon` Not used here (dim, nothing to select); `dev` and `stage` have an Argo Rollout hop, so their cells select it. `argo-refused` shows Can't read in the same column.
+- `rollouts-states`: the Next step column in the other Rollout states, one on each Stage and each with its Rollout hop: `dev` Paused (step 2 of 4), `stage` Degraded, `prod-ams` Aborted and `prod-lon` Progressing. Every Stage holds the Freight in this shape, so `prod-ams` is not left Not reached.
 - `single`: `core-fra` alone.
 - `spread`: Argo CD found in five namespaces with two past the cap.
 - `stages`: `checkout`'s Stages not answering.
@@ -325,6 +329,7 @@ Read by: debug and stress builds. With `--fixture`, opens the view tabs on inven
 Read by: debug and stress builds. With `--fixture`, shapes Settings › Team setup (`settings-team`).
 
 - `failed`: the last fetches failing since 30 hours ago while the applied version stays.
+- `join-failed`: not in a team, and the fetch of any address typed into Join fails.
 - `joined`: joined at the newest version with two ignored keys and two overrides of your own.
 - `none`: not in a team (the default).
 - `trust`: a newer version waiting that changes a signing key, two addresses and a looser protection level.

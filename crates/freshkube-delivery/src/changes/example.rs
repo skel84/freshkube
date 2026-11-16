@@ -578,6 +578,7 @@ fn short(invented: &Invented, reaches: &[(&str, Reach)], now: DateTime<Utc>) -> 
             verification: Vec::new(),
             link: None,
             reach: reach.clone(),
+            next_step: crate::change::NextStep::NoRollout,
             object: object(CICD, GROUP, "Stage", "stages", project, name),
             acts: None,
         });

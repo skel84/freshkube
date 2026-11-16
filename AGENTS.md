@@ -82,7 +82,7 @@ The values each knob takes and what each shape does are in [docs/DEBUG_KNOBS.md]
 | `FRESHKUBE_ACCESS` | Shapes Your access and which actions are offered, with `--fixture`. | debug and stress builds |
 | `FRESHKUBE_AGENT` | Shapes the Agent dock tab, run by a scripted agent, with `--fixture`. | debug and stress builds |
 | `FRESHKUBE_ALERTS` | Reshapes the Alerts, Rules and Silences example, with `--fixture`. | debug and stress builds |
-| `FRESHKUBE_APPLICATIONS` | Reshapes the Applications, Changes and change page example, with `--fixture`. | debug and stress builds |
+| `FRESHKUBE_APPLICATIONS` | Reshapes the Applications, Changes and change page example, with `--fixture`; `causes`, `promoting`, `rollback-unknown`, `rollback-none`, `rollouts` and `rollouts-states` reshape the change page only. | debug and stress builds |
 | `FRESHKUBE_APP_MENU` | Shows the Linux menu button on any platform. | debug builds |
 | `FRESHKUBE_CERTS` | Shapes the Certificates page's example, with `--fixture`. | debug and stress builds |
 | `FRESHKUBE_CRASH` | Shows the crash notice or forces a panic that leads to it. | debug builds |
@@ -104,7 +104,7 @@ The values each knob takes and what each shape does are in [docs/DEBUG_KNOBS.md]
 | `FRESHKUBE_SERVICES` | Shapes the Service pane's endpoints and a workload's traffic chain example, with `--fixture`. | debug and stress builds |
 | `FRESHKUBE_SIDEBAR` | Starts the sidebar collapsed or expanded. | debug and stress builds |
 | `FRESHKUBE_TABS` | Opens the view tabs on invented clusters, or a shell on one while another is shown, with `--fixture`. | debug and stress builds |
-| `FRESHKUBE_TEAM` | Shapes Settings › Team setup, with `--fixture`. | debug and stress builds |
+| `FRESHKUBE_TEAM` | Shapes Settings › Team setup, with `--fixture`; Join and Fetch answer from a script, never the network. | debug and stress builds |
 | `FRESHKUBE_TEXT_SIZE` | Starts at a text size without saving it. | debug builds |
 | `FRESHKUBE_THEME` | Selects light or dark without changing saved settings. | debug and stress builds |
 | `FRESHKUBE_TIMELINE` | Reshapes an application's Timeline example, with `--fixture`. | debug and stress builds |

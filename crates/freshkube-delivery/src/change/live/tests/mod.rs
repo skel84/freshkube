@@ -20,6 +20,7 @@ mod destinations;
 mod discovery;
 mod failures;
 mod links;
+mod next_step;
 mod plan;
 mod reach;
 mod stages;

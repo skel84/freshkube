@@ -96,6 +96,9 @@ struct FixBlock {
     word: &'static str,
     /// Whether something is wrong; Waiting is not.
     problem: bool,
+    /// Not used here: said once, with no Needs and no Fix, since nothing is
+    /// missing.
+    unused: bool,
     tone: Tone,
     why: SharedString,
     needs: SharedString,
@@ -581,6 +584,8 @@ impl ChangePage {
         section(
             if fix.problem {
                 "Why this can't be confirmed"
+            } else if fix.unused {
+                "Why it isn't used here"
             } else {
                 "Why it waits"
             },
@@ -606,28 +611,30 @@ impl ChangePage {
             ),
             cx,
         ))
-        .child(field(
-            "Needs",
-            div().child(
-                div()
-                    .id("change-fix-needs")
-                    .test_support()
-                    .aria_label(fix.needs.clone())
-                    .child(fix.needs.clone()),
-            ),
-            cx,
-        ))
-        .child(field(
-            "Fix",
-            div().child(
-                v_flex()
-                    .id("change-fix-steps")
-                    .test_support()
-                    .gap(dp(7.))
-                    .children(steps),
-            ),
-            cx,
-        ))
+        .when(!fix.unused, |this| {
+            this.child(field(
+                "Needs",
+                div().child(
+                    div()
+                        .id("change-fix-needs")
+                        .test_support()
+                        .aria_label(fix.needs.clone())
+                        .child(fix.needs.clone()),
+                ),
+                cx,
+            ))
+            .child(field(
+                "Fix",
+                div().child(
+                    v_flex()
+                        .id("change-fix-steps")
+                        .test_support()
+                        .gap(dp(7.))
+                        .children(steps),
+                ),
+                cx,
+            ))
+        })
         .into_any_element()
     }
 
@@ -701,8 +708,11 @@ impl ChangePage {
         FixBlock {
             word: cause.word(),
             problem: cause.is_problem(),
+            unused: cause.is_not_used_here(),
             tone: if cause.is_problem() {
                 Tone::Unknown
+            } else if cause.is_not_used_here() {
+                Tone::Outline
             } else {
                 Tone::Waiting
             },
