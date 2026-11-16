@@ -7,7 +7,7 @@
 //! Nothing from the repository runs: git reads objects, never a checkout.
 
 mod git;
-mod https;
+pub(in crate::team) mod https;
 
 use std::path::PathBuf;
 use std::sync::Arc;

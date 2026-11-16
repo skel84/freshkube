@@ -9,8 +9,11 @@
 //! lives only in the key store. A waiting version and a failure are not
 //! saved: the next fetch brings them again.
 //!
-//! The file is read as untrusted text. The source is parsed again, and a
-//! saved level is read as the stricter reading (an unknown word is guarded).
+//! The file is read as untrusted text. The source is parsed again, the
+//! version is rebuilt by parsing the team file's own text again
+//! ([`Version::parse`], so the allowlist runs whoever wrote the file), the
+//! keys of your own values must be ones a team file could set, and a held
+//! level that isn't a level reads as read-only.
 
 use std::collections::BTreeMap;
 
@@ -18,7 +21,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use super::file::Version;
+use super::file::{KEY_FILE, Version, key_allowed};
 use super::mapping::Choice;
 use super::source::{Source, redact};
 
@@ -64,11 +67,54 @@ impl SavedSource {
     }
 }
 
+/// A version as saved: the file's text and what the fetch read beside it. What
+/// the team sets and what it ignores are never saved: they are worked out
+/// again from the text.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SavedVersion {
+    pub id: String,
+    pub file: String,
+    pub key_fingerprints: BTreeMap<String, String>,
+}
+
+impl SavedVersion {
+    pub fn of(version: &Version) -> Option<Self> {
+        Some(Self {
+            id: version.id().to_string(),
+            file: String::from_utf8(version.bytes().to_vec()).ok()?,
+            key_fingerprints: version.key_fingerprints().clone(),
+        })
+    }
+
+    /// The version again, by the rules a fetched file goes through. A
+    /// fingerprint is kept only for the key file the text names.
+    pub fn parse(&self) -> Result<Version, Unusable> {
+        let parsed = Version::parse(&self.id, self.file.as_bytes(), BTreeMap::new())
+            .map_err(|_| Unusable::Version)?;
+        let named = parsed.values().get(KEY_FILE).and_then(Value::as_str);
+        let fingerprints = self
+            .key_fingerprints
+            .iter()
+            .filter(|(path, _)| Some(path.as_str()) == named)
+            .map(|(path, print)| (path.clone(), print.clone()))
+            .collect();
+        Version::parse(&self.id, self.file.as_bytes(), fingerprints).map_err(|_| Unusable::Version)
+    }
+}
+
+/// Your own values, kept only under keys a team file could set.
+pub fn allowed_overrides(saved: BTreeMap<String, Value>) -> BTreeMap<String, Value> {
+    saved
+        .into_iter()
+        .filter(|(key, _)| key_allowed(key))
+        .collect()
+}
+
 /// One membership as saved.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct SavedMembership {
     pub source: SavedSource,
-    pub applied: Option<Version>,
+    pub applied: Option<SavedVersion>,
     pub applied_at: Option<DateTime<Utc>>,
     pub overrides: BTreeMap<String, Value>,
     pub before_joining: BTreeMap<String, Value>,
@@ -83,6 +129,8 @@ pub struct SavedMembership {
 pub enum Unusable {
     /// The address is one that joining refuses.
     Source,
+    /// The team file's text isn't one the rules take.
+    Version,
     /// More keys than any team file has.
     TooLarge,
     /// It names no applied version, so there is nothing to keep.
@@ -93,6 +141,7 @@ impl std::fmt::Display for Unusable {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(match self {
             Unusable::Source => "its address is one that joining refuses",
+            Unusable::Version => "its team file is not one the rules take",
             Unusable::TooLarge => "it holds more than a team file can",
             Unusable::NoVersion => "it holds no reviewed version",
         })
@@ -104,7 +153,7 @@ impl SavedMembership {
     /// source it parses to.
     pub fn check(&self) -> Result<Source, Unusable> {
         let applied = self.applied.as_ref().ok_or(Unusable::NoVersion)?;
-        if applied.values().len() > MAX_KEYS
+        if applied.file.len() as u64 > crate::workspace::MAX_BYTES
             || self.overrides.len() > MAX_KEYS
             || self.before_joining.len() > MAX_KEYS
             || self.held.len() > MAX_KEYS
@@ -176,7 +225,7 @@ mod tests {
     #[test]
     fn the_saved_source_holds_no_credential_and_is_read_again_through_the_rules() {
         let saved = joined().to_saved().expect("saved");
-        let text = serde_json::to_string(&saved).unwrap();
+        let text = serde_json::to_string(&saved.source).unwrap();
         assert!(!text.contains('@') || !text.contains("://"));
         assert!(!text.contains('?') && !text.contains('#'));
         for address in [
@@ -231,5 +280,111 @@ mod tests {
             Membership::from_saved(saved).unwrap_err(),
             Unusable::TooLarge
         );
+    }
+
+    /// A saved team whose team file says `text`, as a person might edit it.
+    fn with_file(text: &str) -> SavedMembership {
+        let mut saved = joined().to_saved().expect("saved");
+        let applied = saved.applied.as_mut().unwrap();
+        applied.file = text.to_string();
+        applied.id = "edited".into();
+        saved
+    }
+
+    #[test]
+    fn a_saved_version_is_parsed_again_so_a_forbidden_key_comes_back_without_it() {
+        // The text carries what a team may never set: a context, agent
+        // access, a token, what writes may do, and a path on this computer.
+        let saved = with_file(
+            "version: 1\nclusters:\n  - id: core-fra\n    role: core\n    protection: protected\n    context: evil-ctx\n    agent:\n      enabled: true\n    token: secret\n    writes: all\n    talosconfig: /etc/passwd\n",
+        );
+        // A saved copy of what was read and what was ignored is not a thing
+        // the file can carry: it only has the text.
+        let after = Membership::from_saved(saved).expect("the rules take the text");
+        let version = after.applied().unwrap();
+        for forbidden in ["context", "agent", "token", "writes", "talosconfig"] {
+            assert!(
+                version.values().keys().all(|key| !key.contains(forbidden)),
+                "{forbidden} came back: {:?}",
+                version.values().keys().collect::<Vec<_>>()
+            );
+        }
+        assert!(
+            version
+                .values()
+                .contains_key("clusters[core-fra].protection")
+        );
+        // And it says what it ignored, worked out from the text.
+        assert!(version.ignored().len() >= 5, "{:?}", version.ignored());
+    }
+
+    #[test]
+    fn a_saved_version_the_rules_refuse_makes_the_file_unusable() {
+        for text in ["not: [a, team", "version: 2\n", "clusters: 3\n"] {
+            assert_eq!(
+                Membership::from_saved(with_file(text)).unwrap_err(),
+                Unusable::Version,
+                "{text}"
+            );
+        }
+    }
+
+    #[test]
+    fn over_https_a_saved_id_must_be_the_texts_hash() {
+        let mut saved = with_file("version: 1\n");
+        saved.source = SavedSource {
+            address: "https://setup.acme.example/team/freshkube.yaml".into(),
+            git_ref: String::new(),
+            path: String::new(),
+        };
+        // The id of an edited file that claims a newer fetch is refused.
+        assert_eq!(
+            Membership::from_saved(saved.clone()).unwrap_err(),
+            Unusable::Version
+        );
+        saved.applied.as_mut().unwrap().id = crate::team::fetch::https::content_id(b"version: 1\n");
+        assert!(Membership::from_saved(saved).is_ok());
+    }
+
+    #[test]
+    fn your_values_are_kept_only_under_keys_a_team_file_could_set() {
+        let mut saved = joined().to_saved().expect("saved");
+        saved.overrides.clear();
+        saved.before_joining.clear();
+        for key in [
+            "clusters[core-fra].protection",
+            "coroot.project",
+            "clusters[core-fra].metrics.source.url",
+        ] {
+            saved.overrides.insert(key.into(), "x".into());
+            saved.before_joining.insert(key.into(), "x".into());
+        }
+        for key in [
+            "clusters[core-fra].context",
+            "clusters[core-fra].agent.enabled",
+            "clusters[core-fra]",
+            "clusters[core-fra].protection.extra",
+            "kubeconfig",
+            "writes",
+            "clusters[../x].protection",
+            "coroot",
+            "..",
+            "",
+        ] {
+            saved.overrides.insert(key.into(), "x".into());
+            saved.before_joining.insert(key.into(), "x".into());
+        }
+        let after = Membership::from_saved(saved).unwrap();
+        let kept: Vec<&str> = after.overrides().keys().map(String::as_str).collect();
+        assert_eq!(
+            kept,
+            [
+                "clusters[core-fra].metrics.source.url",
+                "clusters[core-fra].protection",
+                "coroot.project"
+            ]
+        );
+        let back = after.leave(crate::team::Leave::GoBack);
+        assert_eq!(back.len(), 3, "{back:?}");
     }
 }

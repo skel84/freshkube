@@ -24,7 +24,7 @@ pub mod source;
 mod tests;
 
 pub use fetch::{GitRunner, HttpsFetch, Limits, TeamFetcher};
-pub use file::{Ignored, IgnoredKey, Values, Version, VersionError};
+pub use file::{Ignored, IgnoredKey, Values, Version, VersionError, key_allowed};
 pub use keyfile::{KeyFileError, check_repo_path, fingerprint, resolve_in_repo};
 pub use mapping::{Choice, ContextMap, UnknownContext};
 pub use membership::{Failure, Fetch, FetchFailed, Leave, Membership, Overrides};

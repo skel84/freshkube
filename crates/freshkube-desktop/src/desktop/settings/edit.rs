@@ -341,34 +341,46 @@ impl SettingsPage {
 
     /// "Use the team's value" (#849): takes `key` out of the person's own
     /// `freshkube.yaml` through the setup file's save, so the team's applies,
-    /// then drops the override from the membership. Refused as any save is;
-    /// a value the file doesn't hold only drops the override.
+    /// then drops the override from the membership. A cluster's value comes
+    /// out of the entry on the context chosen for that team cluster, and a
+    /// level is never taken out (`team::clear`). Refused as any save is.
     pub(super) fn use_team_value(&mut self, key: String, cx: &mut Context<Self>) {
         use freshkube_core::team::clear::{NotCleared, without_key};
-        let refuse = |this: &mut Self, why: String, cx: &mut Context<Self>| {
-            this.notice = Some(Notice::Failed(capitalized(&why).into()));
+        let refuse = |this: &mut Self, why: &str, cx: &mut Context<Self>| {
+            this.notice = Some(Notice::Failed(capitalized(why).into()));
             cx.notify();
         };
         if !self.editable() {
             let why = self.why_not_editable().to_owned();
-            return refuse(self, why, cx);
+            return refuse(self, &why, cx);
         }
         let Some(file) = self.setup_file.clone() else {
-            return refuse(self, "there is nowhere to save".to_owned(), cx);
+            return refuse(self, "there is nowhere to save", cx);
+        };
+        let Some(mapping) = self.team_mapping() else {
+            return refuse(self, "you are not in a team", cx);
         };
         let Some(setup) = file.read(cx).setup.clone() else {
-            return self.team_override_dropped(&key, cx);
+            return refuse(self, "there is no setup file to take it out of", cx);
         };
-        let next = match without_key(&setup, &key) {
+        let next = match without_key(&setup, &key, &mapping) {
             Ok(next) => next,
             Err(NotCleared::Absent) => return self.team_override_dropped(&key, cx),
+            Err(NotCleared::Level) => {
+                let why = "your level stays as it is until the team’s level applies to your setup";
+                return refuse(self, why, cx);
+            }
+            Err(NotCleared::NoEntry) => {
+                let why = "none of your entries is on the context you chose for that team cluster";
+                return refuse(self, why, cx);
+            }
             Err(NotCleared::Refused) => {
-                let why = "freshkube.yaml can’t go back to the team’s value for that, so nothing was written";
-                return refuse(self, why.to_owned(), cx);
+                let why = "freshkube.yaml can’t do without that value, so nothing was written";
+                return refuse(self, why, cx);
             }
         };
         let what = format!(
-            "Went back to the team’s value for {}.",
+            "Took {} out of your setup, so the team’s value applies.",
             super::team::friendly(&key)
         );
         let seen = self.seen.clone();

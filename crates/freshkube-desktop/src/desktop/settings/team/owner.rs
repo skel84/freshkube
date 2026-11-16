@@ -598,6 +598,15 @@ impl SettingsPage {
             .is_some_and(|team| team.overrides().contains_key(key))
     }
 
+    /// The words of the last save's failure notice, for the tests.
+    #[cfg(test)]
+    pub(in crate::desktop::settings) fn notice_failed_words(&self) -> Option<String> {
+        match &self.notice {
+            Some(super::super::Notice::Failed(words)) => Some(words.to_string()),
+            _ => None,
+        }
+    }
+
     /// The notice above the section, for the tests.
     #[cfg(test)]
     pub(in crate::desktop::settings) fn team_notice(&self) -> Option<String> {
