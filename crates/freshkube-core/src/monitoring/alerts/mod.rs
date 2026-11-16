@@ -30,12 +30,14 @@ pub use discover::{
     Candidate, Found, LOOKED_FOR, LOOKED_FOR_ALERTMANAGER, LOOKED_FOR_RULES, Rank, Remembered,
     find, rank, rank_all,
 };
-pub use drive::{connect, drive, drive_from};
+pub use drive::{connect, drive, drive_from, keep_reason, nothing_read};
 pub use model::{
     Alert, AlertState, Kind, Rule, RuleGroup, RuleHealth, RuleKind, Severity, Silence,
     SilenceMatcher, SilenceState,
 };
-pub use parse::dedupe;
+pub use parse::{
+    alertmanager_alerts as parse_alertmanager_alerts, dedupe, silences as parse_silences,
+};
 pub use read::{
     Active, AlertsData, Client, MAX_ACTIVE, MAX_ANSWER, MAX_PAGE_ALERTS, ReadFrom, RulesData,
     Scope, SilencesData, Sources, active, alerts_page, scoped, silences_page,

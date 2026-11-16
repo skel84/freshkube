@@ -13,7 +13,7 @@ use std::time::Duration;
 
 const FOUR: &str = "Runs in dev, stage and prod-lon. prod-lon failed (verification failed); \
     the build can't be confirmed (run not found, policy not found); \
-    stage can't be confirmed (delivery.stage_naming not set); and 2 more.";
+    stage can't be confirmed (stage naming not set); and 2 more.";
 
 /// The page's change with nothing unconfirmed, waiting or failing.
 fn healthy(page: &Entity<ChangePage>, window: &mut Window, cx: &mut gpui_kit::App) {
@@ -204,6 +204,30 @@ fn the_headline_stays_within_two_lines_at_the_narrowest_window_and_text_20(
             assert!(right <= column, "{id} ends at {right:?}, past {column:?}");
         }
         assert!(column <= window.viewport_size().width);
+    })
+    .unwrap();
+}
+
+/// #1052: a sentence cut after two lines is whole in a tooltip, which follows
+/// the pointer onto the headline.
+#[gpui_kit::test]
+fn a_cut_headline_is_whole_in_its_tooltip(cx: &mut TestAppContext) {
+    let (handle, page) = open(cx, 760., 560., Shape::Causes, Duration::ZERO, 20.);
+    let words = cx.read(|cx| page.read(cx).headline().to_owned());
+    let draws = freshkube_ui::tooltip::drawn(&words);
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.hover("change-headline", cx);
+        window.render_frame(cx);
+    })
+    .unwrap();
+    cx.executor()
+        .advance_clock(std::time::Duration::from_millis(600));
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.find("follow-tooltip-text");
+        assert!(freshkube_ui::tooltip::drawn(&words) > draws);
     })
     .unwrap();
 }
@@ -591,4 +615,48 @@ fn the_folded_copy_kargo_link_says_why_it_is_greyed_out(cx: &mut TestAppContext)
         cx.read_from_clipboard()
             .is_none_or(|item| item.text().is_none_or(|t| !t.contains("kargo")))
     );
+}
+
+/// A sentence that fits has no tooltip: nothing is cut, so nothing to add.
+#[gpui_kit::test]
+fn a_headline_that_fits_has_no_tooltip(cx: &mut TestAppContext) {
+    let (handle, page) = open(cx, 1280., 880., Shape::Causes, Duration::ZERO, 13.);
+    let words = cx.read(|cx| page.read(cx).headline().to_owned());
+    let draws = freshkube_ui::tooltip::drawn(&words);
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.hover("change-headline", cx);
+        window.render_frame(cx);
+    })
+    .unwrap();
+    cx.executor()
+        .advance_clock(std::time::Duration::from_millis(600));
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert_eq!(freshkube_ui::tooltip::drawn(&words), draws);
+    })
+    .unwrap();
+}
+
+/// #1052's smoke: at the narrowest window and text size 20 the fix step's
+/// words wrap inside the pane instead of being cut mid-word at its edge.
+#[gpui_kit::test]
+fn the_fix_steps_words_wrap_inside_the_pane_at_the_narrowest_and_largest(cx: &mut TestAppContext) {
+    let (handle, page) = open(cx, 760., 560., Shape::Causes, Duration::ZERO, 20.);
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        page.update(cx, |page, cx| page.select("stage-argocd", window, cx));
+        window.render_frame(cx);
+        let words = window.find("change-fix-settings-words").bounds();
+        let pane = window.find("change-fix-steps").bounds();
+        assert!(
+            words.right() <= pane.right() + gpui_kit::px(1.),
+            "{words:?} runs past {pane:?}"
+        );
+        // It broke into more than one line: taller than a single line.
+        let line = crate::ui::dp_px(12.5, window) * 1.2;
+        assert!(words.size.height > line, "{words:?}");
+    })
+    .unwrap();
 }

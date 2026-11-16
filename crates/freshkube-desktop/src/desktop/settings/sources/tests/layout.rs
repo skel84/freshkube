@@ -226,3 +226,30 @@ fn sources_table_and_inspector_follow_the_shared_geometry_at_every_size(cx: &mut
         }
     }
 }
+
+/// #1052: in a narrow window at a large text size Entry and Chosen by keep
+/// their headers whole; the table scrolls sideways instead of collapsing
+/// them to "…".
+#[gpui_kit::test]
+fn entry_and_chosen_by_keep_their_headers_at_the_narrowest_and_largest(cx: &mut TestAppContext) {
+    let (_runtime, handle, view) = fixture(cx, 760., 560.);
+    cx.update_window(handle, |_, window, cx| {
+        crate::text_size::set(20., cx);
+        open(window, cx, &view);
+        layout_check::settle_header(window, cx);
+        assert_eq!(window.rem_size(), gpui_kit::px(20.));
+        for label in ["Entry", "Chosen by"] {
+            let header = gpui_kit::base::test_support::snapshots(window)
+                .into_iter()
+                .find(|element| element.label() == Some(label))
+                .unwrap_or_else(|| panic!("{label} header"))
+                .bounds();
+            assert!(
+                header.size.width >= crate::ui::dp_px(88., window),
+                "{label} is cut to {:?}",
+                header.size.width
+            );
+        }
+    })
+    .unwrap();
+}

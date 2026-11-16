@@ -7,6 +7,7 @@
 
 mod access;
 mod action;
+pub mod alertmanager;
 mod audit;
 pub mod delete;
 mod dialog;

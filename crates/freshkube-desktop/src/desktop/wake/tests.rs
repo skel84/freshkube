@@ -198,3 +198,129 @@ fn the_words_do_not_outlive_the_limit(cx: &mut TestAppContext) {
     })
     .unwrap();
 }
+
+// A network change (#968): one refresh, however many reports.
+
+use freshkube_core::reachability::{OwnSignal, SETTLE};
+
+fn listen(
+    cx: &mut TestAppContext,
+    handle: gpui_kit::AnyWindowHandle,
+    view: &gpui_kit::Entity<Pilot>,
+) -> OwnSignal {
+    let signal = OwnSignal::new();
+    let changes = signal.changes();
+    cx.update_window(handle, |_, window, cx| {
+        view.update(cx, |pilot, cx| pilot.watch_network(changes, window, cx));
+    })
+    .unwrap();
+    cx.run_until_parked();
+    signal
+}
+
+fn settle(cx: &mut TestAppContext) {
+    cx.executor().advance_clock(SETTLE);
+    cx.run_until_parked();
+}
+
+#[gpui_kit::test]
+fn a_burst_of_network_reports_refreshes_the_summary_once(cx: &mut TestAppContext) {
+    let (_runtime, handle, view) = fixture(cx, 1280., 820.);
+    let signal = listen(cx, handle, &view);
+    let before = generation(cx, handle, &view);
+    for _ in 0..5 {
+        signal.announce();
+        cx.run_until_parked();
+    }
+    assert_eq!(
+        generation(cx, handle, &view),
+        before,
+        "not before it settles"
+    );
+    settle(cx);
+    assert_eq!(generation(cx, handle, &view), before + 1, "once");
+    // Nothing more comes of it.
+    settle(cx);
+    settle(cx);
+    assert_eq!(generation(cx, handle, &view), before + 1);
+    // The next change, later, is its own.
+    signal.announce();
+    cx.run_until_parked();
+    settle(cx);
+    assert_eq!(generation(cx, handle, &view), before + 2);
+}
+
+#[gpui_kit::test]
+fn a_network_change_lists_the_shown_resources_page_again_and_not_a_hidden_one(
+    cx: &mut TestAppContext,
+) {
+    use crate::desktop::testing::open_kind;
+    let (_runtime, handle, view) = fixture(cx, 1280., 820.);
+    let lists = |cx: &mut TestAppContext| {
+        cx.update_window(handle, |_, _, cx| {
+            view.read(cx).pages.resources.read(cx).lists_started()
+        })
+        .unwrap()
+    };
+    cx.update_window(handle, |_, window, cx| open_kind(window, cx, "pods"))
+        .unwrap();
+    cx.run_until_parked();
+    let signal = listen(cx, handle, &view);
+    let before = lists(cx);
+    signal.announce();
+    cx.run_until_parked();
+    settle(cx);
+    assert!(lists(cx) > before, "the shown page reads again");
+    // Move to another page: the Resources page is hidden and stays stopped.
+    cx.update_window(handle, |_, window, cx| {
+        view.update(cx, |pilot, cx| {
+            pilot.navigation.page = crate::desktop::Page::Overview;
+            pilot.sync_visible(window, cx);
+        });
+    })
+    .unwrap();
+    cx.run_until_parked();
+    let hidden = lists(cx);
+    signal.announce();
+    cx.run_until_parked();
+    settle(cx);
+    assert_eq!(lists(cx), hidden, "a hidden page stays stopped");
+}
+
+#[gpui_kit::test]
+fn a_network_change_with_nothing_connected_says_nothing_and_reads_nothing(cx: &mut TestAppContext) {
+    use crate::{DebugOptions, GpuiOptions};
+    let mut debug = DebugOptions::default();
+    debug.hold.talos = true;
+    let (_runtime, handle, view) =
+        crate::desktop::testing::mount(cx, GpuiOptions::fixture().with_debug(debug), 1280., 820.);
+    let signal = listen(cx, handle, &view);
+    let before = generation_if_any(cx, handle, &view);
+    signal.announce();
+    cx.run_until_parked();
+    settle(cx);
+    assert!(!reconnecting(cx, handle, &view));
+    assert_eq!(
+        generation_if_any(cx, handle, &view),
+        before,
+        "nothing relisted"
+    );
+}
+
+/// The summary session's generation, when there is a session.
+fn generation_if_any(
+    cx: &mut TestAppContext,
+    handle: gpui_kit::AnyWindowHandle,
+    view: &gpui_kit::Entity<Pilot>,
+) -> Option<u64> {
+    cx.update_window(handle, |_, _, cx| {
+        view.read(cx)
+            .switch
+            .registry
+            .active()
+            .summary_session
+            .as_ref()
+            .map(|session| session.core.generation())
+    })
+    .unwrap()
+}

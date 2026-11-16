@@ -6,6 +6,7 @@ use super::*;
 use crate::ui::dp;
 use freshkube_ui::page;
 use freshkube_ui::palette::palette;
+use freshkube_ui::tooltip::FollowTooltip as _;
 use gpui_kit::component::v_flex;
 
 /// A fix as a chip: its hop's key and its words.
@@ -26,6 +27,11 @@ impl ChangePage {
         }
         let p = palette(cx);
         let this = cx.entity().downgrade();
+        // The sentence is cut after two lines when it is longer than two lines
+        // of the page's width at about 0.42 of the text size per character: then
+        // its tooltip has the whole of it. A sentence that fits has none.
+        let may_cut =
+            self.headline.chars().count() as f32 * (0.42 * 12.5) > 2. * page::inset_width(window);
         let bar = kit::fix_bar(
             "change-fixbar",
             &self.fix_items,
@@ -54,11 +60,15 @@ impl ChangePage {
                                 .min_w_0()
                                 // GPUI wraps every line but the last at the
                                 // width; the ellipsis makes the last one
-                                // wrap and end there too.
+                                // wrap and end there too. The page's short
+                                // window budget (#1004) allows two lines, so a
+                                // longer sentence is cut here and whole in
+                                // the tooltip.
                                 .text_ellipsis()
                                 .line_clamp(2)
                                 .text_size(dp(12.5))
                                 .text_color(p.ink_2)
+                                .when(may_cut, |this| this.follow_tooltip(self.headline.clone()))
                                 .child(self.headline.clone()),
                         )
                         .children(bar),

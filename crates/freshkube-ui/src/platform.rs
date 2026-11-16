@@ -31,6 +31,9 @@ gpui_kit::actions!(
         /// Opens Settings on its Clusters section, where each entry's
         /// Coroot link is.
         OpenClustersSettings,
+        /// Opens Settings on its Monitoring section, where the metrics and
+        /// alerts sources and the cluster label are chosen.
+        OpenMonitoringSettings,
         /// Opens Settings on its Delivery sources section, where the setup
         /// file's delivery keys are shown.
         OpenSourcesSettings,
