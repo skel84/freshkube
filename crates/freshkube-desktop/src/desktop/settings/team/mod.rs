@@ -11,13 +11,16 @@ use freshkube_core::team::{
 };
 use freshkube_ui::status::{Part, Segment};
 use freshkube_ui::{form, page};
-use gpui_kit::component::{Sizable, button::Button, h_flex, v_flex};
+use gpui_kit::component::{Disableable, Sizable, button::Button, h_flex, v_flex};
 use gpui_kit::prelude::*;
 use gpui_kit::*;
 use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet};
 
 use freshkube_ui::tooltip::FollowTooltip as _;
+
+mod join;
+mod owner;
 
 use super::{SettingsPage, SettingsSection};
 use crate::ui::{self, Tone, dp};
@@ -40,6 +43,7 @@ pub(super) struct TeamState {
     /// The banner's Review was pressed; the shell opens the section.
     open_requested: bool,
     pub(super) shown: Shown,
+    owner: owner::Owner,
 }
 
 /// A change as the review lists it.
@@ -87,6 +91,7 @@ pub(super) struct Shown {
     pub(super) counts: String,
     step: Option<Step>,
     rows: Vec<ChangeRow>,
+    join: join::JoinShown,
 }
 
 impl Shown {
@@ -104,6 +109,11 @@ impl Shown {
 }
 
 impl TeamState {
+    /// Whether the Join form's inputs are yet to be made.
+    pub(super) fn owner_form_missing(&self) -> bool {
+        self.owner.form.is_none()
+    }
+
     pub(super) fn example(shape: Shape, now: DateTime<Utc>) -> Self {
         let mut state = match freshkube_core::team::example::membership(shape, now) {
             Some((membership, review)) => Self {
@@ -188,6 +198,7 @@ impl TeamState {
             )
         });
         shown.refusal = self.refusal.map(|why| why.to_string());
+        shown.join = self.derive_join();
         self.shown = shown;
     }
 }
@@ -376,19 +387,12 @@ impl SettingsPage {
         }
     }
 
-    /// Plays an example team (`--fixture`).
-    pub(in crate::desktop) fn set_team_example(&mut self, shape: Shape, cx: &mut Context<Self>) {
-        self.team = TeamState::example(shape, Utc::now());
-        self.derive_levels();
-        self.refit_columns();
-        cx.notify();
-    }
-
     pub(super) fn render_team(&self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let narrow = page::content_width(window) < form::NARROW;
         let header = page::PageHeader::new("settings-team", "Team setup").render(window, cx);
         let body = match (&self.team.left, &self.team.membership) {
             (Some(how), _) => self.team_left(*how, cx),
+            (None, Some(_)) if self.team_is_joining() => self.team_joining(narrow, cx),
             (None, Some(_)) => self.team_joined(narrow, cx),
             (None, None) => self.team_empty(narrow, cx),
         };
@@ -415,6 +419,7 @@ impl SettingsPage {
                     ))
                     .render(cx),
             )
+            .child(self.team_join_group(narrow, cx))
             .into_any_element()
     }
 
@@ -460,6 +465,14 @@ impl SettingsPage {
         } else if self.team.review.is_some() {
             column = column.child(self.team_waiting(cx));
         }
+        let this = cx.entity();
+        let fetching = self.team.owner.is_fetching();
+        let fetch = Button::new("team-fetch")
+            .small()
+            .outline()
+            .label(if fetching { "Fetching…" } else { "Fetch now" })
+            .disabled(fetching)
+            .on_click(move |_, _, cx| this.update(cx, |page, cx| page.team_fetch(cx)));
         let about = form::group("team-source-group", "Source")
             .narrow(narrow)
             .row(form::row(
@@ -471,6 +484,11 @@ impl SettingsPage {
                 "team-version",
                 "Applied version",
                 line("team-version-value", shown.applied.clone()),
+            ))
+            .row(form::row(
+                "team-fetch-row",
+                "Fetch",
+                h_flex().w_full().child(fetch),
             ))
             .row(
                 form::row(
@@ -709,11 +727,13 @@ impl SettingsPage {
         let version = Version::parse("t1", team_file.as_bytes(), Default::default())
             .expect("a valid team file");
         m.fetched(Ok(version), Utc::now());
+        example::map_by_name(&mut m);
         let mut review = m.review().expect("a version waits");
         example::confirm_all(&mut review);
         m.apply(review, Utc::now()).expect("reviewed");
         self.team = TeamState {
             membership: Some(m),
+            owner: std::mem::take(&mut self.team.owner),
             ..TeamState::default()
         };
         self.team.derive();
@@ -775,28 +795,16 @@ impl SettingsPage {
         self.team.shown.clusters.get(id)
     }
 
-    /// Takes the outcome of a fetch of the team file. A different waiting
-    /// version makes a new review and ends a choice to review later; the same
-    /// one, or a failure, leaves the review as it is. The real fetch is a
-    /// later slice; until then only the tests call it.
+    /// Takes the outcome of a fetch, as the owner does when one lands, for
+    /// the tests.
     #[cfg(test)]
     pub(in crate::desktop) fn team_fetched(
         &mut self,
         result: Result<freshkube_core::team::Version, freshkube_core::team::FetchFailed>,
-        now: DateTime<Utc>,
+        _now: DateTime<Utc>,
         cx: &mut Context<Self>,
     ) {
-        let Some(team) = self.team.membership.as_mut() else {
-            return;
-        };
-        if team.fetched(result, now) {
-            self.team.review = team.review();
-            self.team.later = false;
-            self.team.refusal = None;
-        }
-        self.team.derive();
-        self.derive_levels();
-        cx.notify();
+        self.team_landed(result.map_err(|error| error.0), cx);
     }
 
     /// Confirms one trust change.

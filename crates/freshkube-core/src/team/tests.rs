@@ -462,10 +462,12 @@ fn with_print(id: &str, text: &str, print: &str) -> Version {
 fn trust_changes_come_first_and_nothing_applies_unreviewed() {
     let mut m = Membership::join(source(), Overrides::new());
     m.fetched(Ok(with_print("1", TEAM, "aaaa")), at(1));
+    example::map_by_name(&mut m);
     let mut first = m.review().unwrap();
     example::confirm_all(&mut first);
     m.apply(first, at(1)).unwrap();
     m.fetched(Ok(with_print("2", NEXT, "bbbb")), at(2));
+    example::map_by_name(&mut m);
     let mut review = m.review().unwrap();
 
     let kinds: Vec<Option<TrustKind>> = review.changes().iter().map(|c| c.trust).collect();
@@ -531,6 +533,7 @@ fn tightening_protection_is_not_a_trust_change() {
 fn the_first_version_is_reviewed_too() {
     let mut m = Membership::join(source(), Overrides::new());
     m.fetched(Ok(version("1", TEAM)), at(1));
+    example::map_by_name(&mut m);
     let mut review = m.review().unwrap();
     assert!(review.changes().iter().all(|c| c.kind == ChangeKind::Added));
     assert!(m.apply(review.clone(), at(1)).is_err());
@@ -547,6 +550,7 @@ fn the_first_version_is_reviewed_too() {
 fn a_failed_fetch_keeps_the_applied_version_and_says_since_when() {
     let mut m = Membership::join(source(), Overrides::new());
     m.fetched(Ok(version("1", TEAM)), at(1));
+    example::map_by_name(&mut m);
     let mut review = m.review().unwrap();
     example::confirm_all(&mut review);
     m.apply(review, at(1)).unwrap();
@@ -581,6 +585,7 @@ fn leaving_keeps_a_copy_or_goes_back() {
     let before: Overrides = [("coroot.project".to_string(), json!("old"))].into();
     let mut m = Membership::join(source(), before.clone());
     m.fetched(Ok(version("1", TEAM)), at(1));
+    example::map_by_name(&mut m);
     let mut review = m.review().unwrap();
     example::confirm_all(&mut review);
     m.apply(review, at(1)).unwrap();
@@ -864,6 +869,7 @@ clusters:
 fn a_review_applies_only_for_the_versions_it_was_made_for() {
     let mut m = Membership::join(source(), Overrides::new());
     m.fetched(Ok(version("1", TEAM)), at(1));
+    example::map_by_name(&mut m);
     let mut first = m.review().unwrap();
     example::confirm_all(&mut first);
     let forged = Review::new(None, version("9", NEXT)); // for another version
@@ -876,6 +882,7 @@ fn a_review_applies_only_for_the_versions_it_was_made_for() {
     // A finished review can't be used twice, nor after a newer version came.
     assert_eq!(m.apply(first.clone(), at(2)), Err(NotReviewed::Stale));
     m.fetched(Ok(version("2", NEXT)), at(3));
+    example::map_by_name(&mut m);
     let mut stale = m.review().unwrap();
     example::confirm_all(&mut stale);
     m.fetched(Ok(version("3", TEAM)), at(4));
@@ -886,6 +893,7 @@ fn a_review_applies_only_for_the_versions_it_was_made_for() {
     example::confirm_all(&mut other_base);
     assert_eq!(m.apply(other_base, at(5)), Err(NotReviewed::Stale));
     // The honest one still applies.
+    example::map_by_name(&mut m);
     let mut honest = m.review().unwrap();
     example::confirm_all(&mut honest);
     m.apply(honest, at(6)).unwrap();
@@ -1054,6 +1062,7 @@ fn a_team_that_stops_naming_a_cluster_loosens_its_floor_and_needs_a_confirm() {
         [(merge::protection_key("a"), json!("open"))].into(),
     );
     m.fetched(Ok(version("1", only_a)), at(1));
+    example::map_by_name(&mut m);
     let mut first = m.review().unwrap();
     example::confirm_all(&mut first);
     m.apply(first, at(1)).unwrap();
@@ -1061,6 +1070,7 @@ fn a_team_that_stops_naming_a_cluster_loosens_its_floor_and_needs_a_confirm() {
     let held = resolve(&key, &m.team_values(), m.overrides(), &Values::new());
     assert!(held.floor_held);
     m.fetched(Ok(version("2", none)), at(2));
+    example::map_by_name(&mut m);
     let mut review = m.review().unwrap();
     assert!(!review.confirm_rest());
     assert_eq!(review.trust_pending().count(), 1);
@@ -1158,6 +1168,7 @@ fn only_a_different_waiting_version_counts_as_new() {
     assert!(m.fetched(Ok(two), at(4)));
     assert_eq!(m.pending().map(|v| v.id()), Some("2"));
     // Applied and fetched again: nothing waits, nothing is new.
+    example::map_by_name(&mut m);
     let mut review = m.review().unwrap();
     example::confirm_all(&mut review);
     m.apply(review, at(5)).unwrap();
@@ -1167,6 +1178,7 @@ fn only_a_different_waiting_version_counts_as_new() {
 
 /// Applies the waiting version after confirming every step.
 fn apply_waiting(m: &mut Membership, day: u32) {
+    example::map_by_name(m);
     let mut review = m.review().unwrap();
     example::confirm_all(&mut review);
     m.apply(review, at(day)).unwrap();
@@ -1312,4 +1324,105 @@ fn the_effective_level_is_never_looser_than_the_floor() {
         free.unwrap().effective(Some(Protection::Open)).0,
         Protection::Open
     );
+}
+
+// ---- Map your contexts (#849 slice 4) ----
+
+fn contexts(names: &[&str]) -> Vec<String> {
+    names.iter().map(|n| n.to_string()).collect()
+}
+
+fn joined_with_clusters() -> Membership {
+    let mut m = Membership::join(source(), Overrides::new());
+    m.fetched(
+        Ok(version(
+            "1",
+            "version: 1\nclusters:\n  - id: core-fra\n    role: core\n  - id: stage-lon\n    role: environment\n",
+        )),
+        at(1),
+    );
+    m
+}
+
+#[test]
+fn joining_asks_for_a_context_per_team_cluster_and_chooses_none_for_you() {
+    let m = joined_with_clusters();
+    assert!(m.needs_mapping());
+    let ids: Vec<&str> = m.mapping().clusters().map(|(id, _)| id).collect();
+    assert_eq!(ids, ["core-fra", "stage-lon"]);
+    assert!(m.mapping().clusters().all(|(_, choice)| choice.is_none()));
+    assert!(!m.mapping().is_complete());
+    // A context named like the cluster is offered, never taken.
+    let mine = contexts(&["core-fra", "other"]);
+    assert_eq!(ContextMap::suggested("core-fra", &mine), Some("core-fra"));
+    assert_eq!(ContextMap::suggested("stage-lon", &mine), None);
+    assert!(m.mapping().choice("core-fra").is_none());
+}
+
+#[test]
+fn a_context_must_be_one_of_yours_and_the_team_names_none() {
+    let mut m = joined_with_clusters();
+    let mine = contexts(&["core-fra", "my-stage"]);
+    assert_eq!(
+        m.map_context("core-fra", Choice::Context("team-chosen".into()), &mine),
+        Err(UnknownContext)
+    );
+    assert!(m.mapping().choice("core-fra").is_none());
+    m.map_context("core-fra", Choice::Context("core-fra".into()), &mine)
+        .unwrap();
+    m.map_context("stage-lon", Choice::LeftOut, &mine).unwrap();
+    assert!(m.mapping().is_complete());
+    assert_eq!(
+        m.mapping().contexts().into_iter().collect::<Vec<_>>(),
+        [("core-fra", "core-fra")]
+    );
+    // A cluster the team doesn't name is not added.
+    m.map_context("elsewhere", Choice::LeftOut, &mine).unwrap();
+    assert_eq!(m.mapping().clusters().count(), 2);
+}
+
+#[test]
+fn the_first_version_does_not_apply_until_every_cluster_is_mapped() {
+    let mut m = joined_with_clusters();
+    let mut review = m.review().unwrap();
+    example::confirm_all(&mut review);
+    assert_eq!(m.apply(review.clone(), at(2)), Err(NotReviewed::Unmapped));
+    assert!(m.applied().is_none());
+    assert!(NotReviewed::Unmapped.to_string().contains("Map"));
+    m.map_context("core-fra", Choice::LeftOut, &[]).unwrap();
+    assert_eq!(m.apply(review.clone(), at(2)), Err(NotReviewed::Unmapped));
+    m.map_context("stage-lon", Choice::LeftOut, &[]).unwrap();
+    m.apply(review, at(2)).unwrap();
+    assert!(m.applied().is_some());
+    assert!(!m.needs_mapping());
+}
+
+#[test]
+fn use_matching_names_maps_only_the_clusters_with_a_context_of_that_name() {
+    let mut m = joined_with_clusters();
+    let mine = contexts(&["core-fra", "my-stage"]);
+    assert_eq!(m.map_suggested(&mine), 1);
+    assert_eq!(
+        m.mapping().choice("core-fra"),
+        Some(&Choice::Context("core-fra".into()))
+    );
+    assert!(m.mapping().choice("stage-lon").is_none());
+    assert_eq!(m.mapping().unchosen(), 1);
+}
+
+#[test]
+fn a_newer_waiting_version_keeps_the_choices_for_clusters_it_still_names() {
+    let mut m = joined_with_clusters();
+    m.map_context("core-fra", Choice::LeftOut, &[]).unwrap();
+    m.fetched(
+        Ok(version(
+            "2",
+            "version: 1\nclusters:\n  - id: core-fra\n    role: core\n  - id: new-one\n    role: core\n",
+        )),
+        at(3),
+    );
+    assert_eq!(m.mapping().choice("core-fra"), Some(&Choice::LeftOut));
+    assert!(m.mapping().choice("new-one").is_none());
+    assert!(m.mapping().choice("stage-lon").is_none());
+    assert_eq!(m.mapping().clusters().count(), 2);
 }

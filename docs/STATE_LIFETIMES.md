@@ -319,6 +319,10 @@ findings and the setup's `delivery.build_namespace`. Its keys (`f`, `a`, Enter,
 Backspace) act only when there is something to start, accept or ignore, and
 otherwise let the key through to the focused control.
 
+### The team setup fetch
+
+Settings › Team setup (`desktop/settings/team/owner.rs`, [settings.md](features/settings.md#team-setup)) reads the shared team file through one `Loader<Version, Source>`; the identity is the source, so an answer for a replaced address never publishes. It reads only while the section shows (showing again reads when the last answer is five minutes old), from Fetch now or from Join; hiding or replacing drops the read and its Tokio job, which kills the git child (`TeamFetcher::work`). Nothing fetches in the background, and a failed fetch keeps the applied version. The kubeconfig contexts for "Map your contexts" are a second `Loader<Vec<String>, ()>` read once when that step opens.
+
 ### Deep links' reads
 
 The fingerprint reads of [deep links](features/deep-links.md#which-cluster) are ordinary reads owned by `deep_link::cluster::Identities` on `Pilot`: each `OwnedJob` and its delivery `Task` stay there. The open cluster's read belongs to the source it started under and is ignored when the window moved to another; a Check is one job per context, started only by the reader's click, replaced by none and dropped with the window; the kubeconfig read (server and CA hashes) completes into whoever waited for it. `fingerprints.json` is a cache, never an identity: a record counts only while the kubeconfig still names the same server and CA.

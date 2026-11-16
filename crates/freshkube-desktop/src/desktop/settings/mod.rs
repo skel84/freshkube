@@ -37,6 +37,8 @@ mod source;
 pub(super) mod sources;
 mod team;
 #[cfg(test)]
+mod team_join_tests;
+#[cfg(test)]
 mod team_tests;
 #[cfg(test)]
 pub(super) mod tests;
@@ -391,6 +393,8 @@ impl SettingsPage {
             })
             .detach();
         }
+        let team_runtime = runtime.clone();
+        let team_secrets = metrics_secrets.clone();
         let mut page = Self {
             connection: None,
             coroot: None,
@@ -462,6 +466,11 @@ impl SettingsPage {
             audit: audit::AuditView::new(),
             team: Default::default(),
         };
+        page.set_team_io(
+            team_runtime,
+            crate::preferences_path().and_then(|file| file.parent().map(|dir| dir.join("team"))),
+            team_secrets,
+        );
         page.derive_follows(cx);
         page
     }
@@ -652,6 +661,9 @@ impl SettingsPage {
         if self.section == SettingsSection::Coroot && self.coroot.is_none() {
             cx.defer_in(window, |page, window, cx| page.prepare_coroot(window, cx));
         }
+        if self.section == SettingsSection::Team && self.team.owner_form_missing() {
+            cx.defer_in(window, |page, window, cx| page.prepare_team(window, cx));
+        }
         if self.section == SettingsSection::Monitoring {
             cx.defer_in(window, |page, window, cx| {
                 page.prepare_monitoring(window, cx)
@@ -684,6 +696,7 @@ impl SettingsPage {
             self.section = section;
             self.sync_sources(cx);
             self.sync_audit(cx);
+            self.sync_team(cx);
             cx.notify();
         }
     }
@@ -693,6 +706,7 @@ impl SettingsPage {
         self.visible = visible;
         self.sync_sources(cx);
         self.sync_audit(cx);
+        self.sync_team(cx);
     }
 
     /// The audit log is read when its section shows, and not while hidden.
