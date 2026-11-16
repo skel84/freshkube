@@ -570,7 +570,7 @@ impl ObservabilityPage {
         let input = self.threshold.clone();
         let owner = cx.entity().downgrade();
         // Save and Enter share one check; a bad number keeps the dialog open.
-        let save: Rc<dyn Fn(&mut Window, &mut App) -> bool> = Rc::new(move |window, cx| {
+        let save: ThresholdSave = Rc::new(move |window, cx| {
             owner
                 .update(cx, |this, cx| {
                     let value = this.threshold.read(cx).value().to_string();
@@ -612,6 +612,9 @@ impl ObservabilityPage {
             .update(cx, |input, cx| input.focus(window, cx));
     }
 }
+/// What Save and Enter both run in the threshold dialog: true closes it.
+type ThresholdSave = Rc<dyn Fn(&mut Window, &mut App) -> bool>;
+
 impl Focusable for ObservabilityPage {
     fn focus_handle(&self, _: &App) -> FocusHandle {
         self.focus.clone()
