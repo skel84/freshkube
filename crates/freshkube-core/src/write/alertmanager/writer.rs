@@ -392,11 +392,6 @@ impl AlertWriter {
     /// Private, and reached only from `preview` and `read_back` (GET),
     /// `create` (POST) and `expire` (DELETE): no other method is written in
     /// this file, which a test reads (guarantee 29).
-    ///
-    /// Private, and called only from `preview`, `read_back` (GET), `create`
-    /// (POST) and `expire` (DELETE): a new write method is a new caller here,
-    /// which review of this file sees, and `safety_g29`'s recorded requests
-    /// show.
     async fn send(
         &self,
         method: Method,

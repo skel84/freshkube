@@ -461,10 +461,22 @@ async fn safety_g31_an_expire_is_held_to_the_strictest_level_of_the_clusters_it_
         Block::ReadOnly(_)
     ));
     // One with no exact cluster matcher reaches every entry.
-    let any = existing_silence_of(&fake);
+    let mut any = cluster_silence("sil-any", "prod-fra");
+    any.matchers.retain(|m| m.name != "cluster");
     let any = describe_expire(&am::service(), &seen(), &any);
     assert!(matches!(
         blocked(runner.preflight(any).await),
+        Block::ReadOnly(_)
+    ));
+    // One of a cluster this window doesn't know of is held to every entry,
+    // not to none.
+    let unknown = describe_expire(
+        &am::service(),
+        &seen(),
+        &cluster_silence("sil-xyz", "prod-xyz"),
+    );
+    assert!(matches!(
+        blocked(runner.preflight(unknown).await),
         Block::ReadOnly(_)
     ));
     assert!(fake.recorder.requests().is_empty(), "not even a read");
@@ -478,18 +490,6 @@ async fn safety_g31_an_expire_is_held_to_the_strictest_level_of_the_clusters_it_
     let finished = run(&runner, prepared, Confirmation::Confirmed).await;
     assert_eq!(finished.headline(), Headline::Done);
     assert_eq!(fake.silence_state("sil-fra").as_deref(), Some("expired"));
-}
-
-fn existing_silence_of(_fake: &Fake) -> crate::monitoring::alerts::Silence {
-    crate::monitoring::alerts::Silence {
-        id: "sil-any".into(),
-        state: crate::monitoring::alerts::SilenceState::Active,
-        matchers: vec![matcher("alertname", "HighLatency", false, true)],
-        created_by: "someone".into(),
-        comment: "planned".into(),
-        starts_at: None,
-        ends_at: "2026-01-01T12:00:00Z".parse().ok(),
-    }
 }
 
 #[tokio::test(start_paused = true)]

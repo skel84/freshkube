@@ -458,9 +458,11 @@ impl ActionDescription {
     }
 
     /// A silence or an Expire asks at every level but `read-only`, which
-    /// blocks it: it can mute alerts nobody would then see, and a silence
-    /// that is Undone does not send what it held back. Declared here, in
-    /// core, as `no_confirmation` is.
+    /// blocks it: it can mute alerts nobody would then see, and an Expire
+    /// does not re-send what a silence held back. The one exception is Undo,
+    /// which is a write like any other at its level: an Undo Expire on an
+    /// `open` cluster asks nothing. Declared here, in core, as
+    /// `no_confirmation` is.
     pub fn always_asks(&self) -> bool {
         self.changes
             .iter()
