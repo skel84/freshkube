@@ -136,6 +136,7 @@ fn object(cluster: &str, group: &str, kind: &str, namespace: &str, name: &str) -
         "Pod" => ("v1", "pods"),
         "Freight" => (VERSION, "freights"),
         "Stage" => (VERSION, "stages"),
+        "Rollout" => ("v1alpha1", "rollouts"),
         _ => (VERSION, "applications"),
     };
     Object {
@@ -252,6 +253,7 @@ fn stages(now: DateTime<Utc>) -> Vec<Stage> {
         verification,
         link: stage_link(name),
         reach: Reach::Linked(Confidence::Confirmed),
+        next_step: NextStep::NoRollout,
         object: stage_object(name),
         acts: Some(example_acts(name)),
     };
@@ -1096,6 +1098,86 @@ fn rollback_shape(change: &mut Change, none: bool) {
     }
 }
 
+/// [`Shape::Rollouts`] and [`Shape::RolloutStates`]: what the Next step
+/// column says for each Stage, and an Argo Rollout hop for each Stage that
+/// runs one, so its cell selects something as a live read gives it. With
+/// `reach_all` every Stage holds the Freight, so the states of the Stages
+/// that the Freight hasn't reached show too.
+fn rollouts(change: &mut Change, states: &[(&str, NextStep)], reach_all: bool) {
+    for ix in 0..change.stages.len() {
+        let stage = &mut change.stages[ix];
+        stage.next_step = states
+            .iter()
+            .find(|(name, _)| *name == stage.name)
+            .map_or(NextStep::NotReached, |(_, next)| next.clone());
+        if reach_all {
+            stage.running = None;
+            if stage.reach == Reach::NotReached {
+                stage.reach = Reach::Linked(Confidence::Confirmed);
+            }
+        }
+        let (name, cluster) = (
+            stage.name.clone(),
+            stage.cluster.cluster().map(str::to_owned),
+        );
+        let (words, state) = (
+            stage.next_step.word(),
+            match stage.next_step {
+                NextStep::Done => Healthy,
+                NextStep::Step { .. } | NextStep::Paused { .. } => Info,
+                NextStep::Degraded { .. } => Warning,
+                NextStep::Aborted => Error,
+                NextStep::Progressing => Pending,
+                _ => continue,
+            },
+        );
+        let (Some(group), Some(cluster)) = (stage_group(change, ix), cluster) else {
+            continue;
+        };
+        let key = format!("{name}-argocd");
+        let Some(at) = change.hops.iter().position(|hop| hop.key == key) else {
+            continue;
+        };
+        let hop = Hop {
+            cause: None,
+            key: format!("{name}-rollout"),
+            group,
+            state,
+            name: format!("Rollout {DEPLOYMENT}"),
+            detail: words.clone(),
+            from: cluster.clone(),
+            at: change.hops[at].at,
+            link: Some(Confidence::Confirmed),
+            after: Some(key),
+            shows: Shows::Hop(Box::new(HopDetail {
+                kind: "Argo Rollout".into(),
+                title: DEPLOYMENT.into(),
+                state: words,
+                notice: None,
+                fields: vec![
+                    mono("Namespace", PROJECT),
+                    mono("Name", DEPLOYMENT),
+                    mono("Read from", &cluster),
+                ],
+                link: link(
+                    Confidence::Confirmed,
+                    "name",
+                    "Application",
+                    "the Application manages it",
+                    "its name is in the Application's resources",
+                    "Managed by the Application, by name.",
+                ),
+                unlinked: None,
+                actions: vec![resource(
+                    "the Rollout",
+                    object(&cluster, argocd::GROUP, "Rollout", PROJECT, DEPLOYMENT),
+                )],
+            })),
+        };
+        change.hops.insert(at + 1, hop);
+    }
+}
+
 /// [`Shape::Promoting`]: a Promotion of the Freight to `prod-ams`, made by
 /// someone else, is running.
 fn promoting(change: &mut Change) {
@@ -1369,6 +1451,12 @@ pub enum Shape {
     RollbackUnknown,
     /// No Stage has an earlier Freight in its history.
     RollbackNone,
+    /// Each Stage's Rollout in another state: `dev` paused on step 2 of 4,
+    /// `stage` degraded, `prod-ams` aborted and `prod-lon` progressing.
+    RolloutStates,
+    /// The Stages' Rollouts: `dev` is done, `stage` is on step 2 of 4,
+    /// `prod-ams` isn't reached and `prod-lon`'s couldn't be read.
+    Rollouts,
 }
 
 impl Shape {
@@ -1400,6 +1488,8 @@ impl Shape {
             | Self::Promoting
             | Self::RollbackUnknown
             | Self::RollbackNone
+            | Self::Rollouts
+            | Self::RolloutStates
             | Self::GitHubLimited
             | Self::GitHubRefused
             | Self::GitHubOffline
@@ -1448,6 +1538,31 @@ impl Shape {
             }
             return Ok(change);
         }
+        if self == Self::Rollouts {
+            rollouts(
+                &mut change,
+                &[
+                    ("dev", NextStep::Done),
+                    ("stage", NextStep::Step { at: 2, of: 4 }),
+                    ("prod-lon", NextStep::NoRollout),
+                ],
+                false,
+            );
+            return Ok(change);
+        }
+        if self == Self::RolloutStates {
+            rollouts(
+                &mut change,
+                &[
+                    ("dev", NextStep::Paused { step: Some((2, 4)) }),
+                    ("stage", NextStep::Degraded { step: Some((2, 4)) }),
+                    ("prod-ams", NextStep::Aborted),
+                    ("prod-lon", NextStep::Progressing),
+                ],
+                true,
+            );
+            return Ok(change);
+        }
         if matches!(self, Self::RollbackUnknown | Self::RollbackNone) {
             rollback_shape(&mut change, self == Self::RollbackNone);
             return Ok(change);
@@ -1467,6 +1582,8 @@ impl Shape {
             | Self::Promoting
             | Self::RollbackUnknown
             | Self::RollbackNone
+            | Self::Rollouts
+            | Self::RolloutStates
             | Self::GitHubLimited
             | Self::GitHubRefused
             | Self::GitHubOffline
@@ -1497,6 +1614,16 @@ impl Shape {
                     if stage.reach != Reach::NotReached {
                         stage.reach = Reach::Refused("Argo CD Applications".into());
                     }
+                    // With no Application read, nothing says whether a Rollout
+                    // runs: the Next step is Unknown, never No Rollout.
+                    stage.next_step = NextStep::Unknown {
+                        why: format!("its Application couldn't be read: {why}"),
+                        cause: Some(Cause::cant_read(
+                            "the Argo CD Applications, to see what the Stage runs",
+                            Some(Role::new("argoproj.io", "applications", None)),
+                            true,
+                        )),
+                    };
                     stage.cluster =
                         Destination::Unknown(format!("its Application couldn't be read: {why}"));
                     change.groups[group].detail = stage.cluster.words();
@@ -1811,6 +1938,29 @@ mod tests {
         assert_eq!(link.key, None);
         assert!(link.why.contains(reason));
         assert!(detail.actions.is_empty());
+    }
+
+    #[test]
+    fn argo_refused_makes_the_next_step_unknown_for_a_stage_with_an_application() {
+        let change = Shape::ArgoRefused.apply(super::change(now())).unwrap();
+        let unknown: Vec<_> = change
+            .stages
+            .iter()
+            .filter(|stage| matches!(stage.next_step, NextStep::Unknown { .. }))
+            .map(|stage| stage.name.as_str())
+            .collect();
+        assert!(!unknown.is_empty());
+        for stage in change
+            .stages
+            .iter()
+            .filter(|stage| unknown.contains(&stage.name.as_str()))
+        {
+            assert_eq!(stage.next_step.word(), "Can't read", "{}", stage.name);
+        }
+        // None says it has no Rollout, since nothing was read to say so.
+        assert!(change.stages.iter().all(
+            |stage| stage.next_step != NextStep::NoRollout || stage.reach == Reach::NotReached
+        ));
     }
 
     #[test]
