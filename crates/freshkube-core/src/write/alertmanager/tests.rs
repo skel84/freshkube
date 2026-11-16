@@ -539,8 +539,9 @@ async fn more_than_the_bound_is_counted_as_at_least_and_never_listed_in_full() {
         reasons(classify(&draft, &preview, Protection::Open).unwrap()),
         vec![Reason::MoreThanCounted(MAX_PREVIEW_ALERTS)]
     );
-    // An inexact preview is never "the same" as another, even itself.
-    assert!(!preview.same_as(&preview.clone()));
+    // A capped preview is compared as a count and the clusters it reaches:
+    // which alerts it counted first is not stable.
+    assert!(preview.same_as(&preview.clone()));
 }
 
 #[tokio::test]
@@ -651,6 +652,17 @@ fn the_same_preview_compares_by_the_set_of_alerts() {
     assert!(a.same_as(&b));
     b.fingerprints = vec!["y".into()];
     assert!(!a.same_as(&b));
+    // A capped count is the same only with the same clusters reached.
+    let mut capped = Preview::none();
+    capped.muted = Muted::AtLeast(200);
+    capped.clusters = vec!["prod-fra".into()];
+    let mut spread = capped.clone();
+    assert!(capped.same_as(&spread));
+    spread.clusters.push("prod-ams".into());
+    spread.other_clusters = 3;
+    assert!(!capped.same_as(&spread));
+    spread.clusters = capped.clusters.clone();
+    assert!(!capped.same_as(&spread), "other clusters' alerts count too");
 }
 
 // ---- the writes ----

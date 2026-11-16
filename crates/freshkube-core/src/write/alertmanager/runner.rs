@@ -10,7 +10,9 @@ use chrono::{DateTime, Utc};
 use serde_json::Value;
 use tokio::time::{Instant, sleep};
 
-use super::change::{ExpireChange, Scope, SilenceChange, questions};
+use super::change::{
+    ExpireChange, Scope, ServiceSeen, SilenceChange, depends_on, questions, service_target,
+};
 use super::silence::{Class, Draft, MIN_DURATION, Mode, classify};
 use super::writer::{AlertWriter, Muted, Preview, ReadBack, WriteError, same_matchers};
 use crate::monitoring::alerts::SilenceState;
@@ -21,15 +23,32 @@ use crate::write::{
 };
 
 /// What the person was shown, kept to compare with what is true at send.
-#[derive(Debug)]
 pub(in crate::write) struct AlertSeen {
     preview: Option<Preview>,
     class: Option<Class>,
 }
 
-fn same_alerts(a: &Preview, b: &Preview) -> bool {
-    // A count past the bound can't be listed, so it is compared as a count.
-    a.muted == b.muted && (!a.muted.is_exact() || a.fingerprints == b.fingerprints)
+// The preview holds label values: never printed.
+impl std::fmt::Debug for AlertSeen {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "AlertSeen({} alerts)",
+            self.preview.as_ref().map_or(0, |p| p.fingerprints.len())
+        )
+    }
+}
+
+/// How long a silence lasts, in the unit it reads best in.
+fn duration_words(duration: Duration) -> String {
+    let minutes = duration.as_secs().div_ceil(60);
+    if minutes.is_multiple_of(60) {
+        format!("{} h", minutes / 60)
+    } else if minutes < 60 {
+        format!("{minutes} min")
+    } else {
+        format!("{} h {} min", minutes / 60, minutes % 60)
+    }
 }
 
 fn is_alert(change: &Change) -> bool {
@@ -56,9 +75,9 @@ fn silence_sentence(change: &SilenceChange, class: &Class, muted: Muted) -> Stri
         Muted::AtLeast(n) => format!("more than {n}"),
     };
     format!(
-        "Silence alertname={name}: {} matchers, {} h, {}, mutes {count} now",
+        "Silence alertname={name}: {} matchers, {}, {}, mutes {count} now",
         change.draft.matchers.len(),
-        change.draft.duration.as_secs() / 3600,
+        duration_words(change.draft.duration),
         if class.is_narrow() { "narrow" } else { "broad" },
     )
 }
@@ -99,13 +118,6 @@ impl Runner {
         self
     }
 
-    fn refuse(object: &str, message: impl Into<String>) -> Verdict {
-        Verdict::Blocked(Block::Refused {
-            object: object.to_owned(),
-            message: message.into(),
-        })
-    }
-
     /// The access review per method and the Service as the person saw it.
     async fn gate(&self, change: &ObjectChange) -> Result<(), Block> {
         let object = change.target.label();
@@ -137,6 +149,10 @@ impl Runner {
         change: &ObjectChange,
         expire: &ExpireChange,
     ) -> Result<Vec<String>, Block> {
+        // Example data has no Alertmanager: nothing to ask or read.
+        if self.example {
+            return Ok(vec![]);
+        }
         self.gate(change).await?;
         let object = change.target.label();
         let writer = AlertWriter::new(self.client.clone(), expire.service.clone());
@@ -187,41 +203,12 @@ impl Runner {
         &self,
         mut action: ActionDescription,
     ) -> Verdict {
-        let [change] = action.changes.as_mut_slice() else {
-            return Verdict::Blocked(Block::Empty);
+        let object = match action.changes.as_slice() {
+            [change] => change.target.label(),
+            _ => return Verdict::Blocked(Block::Empty),
         };
-        let object = change.target.label();
-        // The runner sets what a page must not: the mode, the actor and, for
-        // a shared store, which entries the silence can reach.
-        let mut destinations = None;
-        if let Change::Silence(silence) = &mut change.change {
-            let Some(scope) = &self.alert_scope else {
-                return Self::refuse(
-                    &object,
-                    "This window can't say which cluster's alerts these are, so nothing was sent.",
-                );
-            };
-            let Some(mode) = scope.mode() else {
-                return Self::refuse(
-                    &object,
-                    "This Alertmanager's alerts carry no cluster label, so a silence can't be limited to one cluster. Nothing was sent.",
-                );
-            };
-            silence.draft.mode = mode;
-            silence.actor = self.who.actor.clone();
-            if let Scope::Central { entries, value, .. } = scope {
-                let exact = silence.draft.has_exact_cluster();
-                destinations = Some(
-                    entries
-                        .iter()
-                        .filter(|(cluster, _)| !exact || cluster == value)
-                        .map(|(_, destination)| destination.clone())
-                        .collect(),
-                );
-            }
-        }
-        if let Some(destinations) = destinations {
-            action.destinations = destinations;
+        if let Err(block) = self.resolve_scope(&mut action, &object) {
+            return Verdict::Blocked(block);
         }
         // The entry's id is what a protected cluster asks to be typed.
         action.subjects = vec![self.who.entry.clone()];
@@ -241,31 +228,7 @@ impl Runner {
             },
             _ => return Verdict::Blocked(Block::Empty),
         };
-        let mut inverses = vec![None];
-        if let (Change::Silence(silence), Some(class), Some(preview)) =
-            (&change.change, &class, &preview)
-        {
-            action.tier = if class.is_narrow() {
-                Tier::Reversible
-            } else {
-                Tier::SpecChange
-            };
-            action.sentence = silence_sentence(silence, class, preview.muted);
-            if class.is_narrow() {
-                // Its way back, Expire of the id, is known once it is accepted.
-                action.changes[0].inverse = Some(crate::write::InverseFrom::after_accept());
-                inverses[0] = Some(Inverse {
-                    change: Change::Expire(Box::new(ExpireChange {
-                        service: silence.service.clone(),
-                        id: String::new(),
-                        matchers: vec![],
-                        ends_at: None,
-                    })),
-                    observe: Observation::SilenceExpired,
-                    guard: Observation::Unobservable,
-                });
-            }
-        }
+        let inverses = vec![Self::classed(&mut action, &change, &class, &preview)];
         let mut shown = lines;
         if let Some(Class::Broad(reasons)) = &class {
             shown.extend(reasons.iter().map(|reason| reason.words()));
@@ -303,6 +266,122 @@ impl Runner {
             inverses,
             alert_seen: Some(AlertSeen { preview, class }),
         }))
+    }
+
+    /// What a page must not decide, set from what the runner resolved: the
+    /// confirmation, the Service the request goes through (the access review,
+    /// the `Depends` check and the write all name the change's own Service),
+    /// the way back, the scope's mode and actor, and which entries the write
+    /// can reach. A silence or an Expire without a scope that allows it is
+    /// refused: nothing is sent.
+    fn resolve_scope(&self, action: &mut ActionDescription, object: &str) -> Result<(), Block> {
+        let refuse = |message: &str| Block::Refused {
+            object: object.to_owned(),
+            message: message.to_owned(),
+        };
+        let Some(scope) = &self.alert_scope else {
+            return Err(refuse(
+                "This window can't say which cluster's alerts these are, so nothing was sent.",
+            ));
+        };
+        let Some(mode) = scope.mode() else {
+            return Err(refuse(
+                "This Alertmanager's alerts carry no cluster label, so a silence can't be limited to one cluster. Nothing was sent.",
+            ));
+        };
+        action.no_confirmation = false;
+        action.destinations = vec![];
+        let change = &mut action.changes[0];
+        change.inverse = None;
+        // The exact cluster the write names, if any: a silence's own matcher,
+        // or the one of the silence an Expire ends.
+        let central = match scope {
+            Scope::Central { label, value, .. } => Some((label, value)),
+            _ => None,
+        };
+        let (service, only) = match &mut change.change {
+            Change::Silence(silence) => {
+                silence.draft.mode = mode;
+                silence.actor = self.who.actor.clone();
+                change.observe = Observation::SilenceActive;
+                let only = silence
+                    .draft
+                    .has_exact_cluster()
+                    .then(|| central.map(|(_, value)| value.clone()))
+                    .flatten();
+                (silence.service.clone(), only)
+            }
+            Change::Expire(expire) => {
+                change.observe = Observation::SilenceExpired;
+                action.tier = Tier::Reversible;
+                action.sentence = "Expire a silence".to_owned();
+                let only = central.and_then(|(label, _)| {
+                    expire
+                        .matchers
+                        .iter()
+                        .find(|m| &m.name == label && m.equal && !m.regex)
+                        .map(|m| m.value.clone())
+                });
+                (expire.service.clone(), only)
+            }
+            _ => return Err(Block::Empty),
+        };
+        let seen = ServiceSeen {
+            uid: change.target.uid.clone(),
+            resource_version: change.target.resource_version.clone(),
+        };
+        change.target = service_target(&service, &seen);
+        change.depends = depends_on(&change.target);
+        if let Scope::Central { entries, .. } = scope {
+            let reached: Vec<_> = entries
+                .iter()
+                .filter(|(cluster, _)| only.as_ref().is_none_or(|only| cluster == only))
+                .map(|(_, destination)| destination.clone())
+                .collect();
+            // A cluster this window doesn't know of is held to every entry.
+            action.destinations = if reached.is_empty() {
+                entries.iter().map(|(_, d)| d.clone()).collect()
+            } else {
+                reached
+            };
+        }
+        Ok(())
+    }
+
+    /// The tier, sentence and way back of a silence, from how it is classed.
+    /// Returns its inverse for the audit.
+    fn classed(
+        action: &mut ActionDescription,
+        change: &ObjectChange,
+        class: &Option<Class>,
+        preview: &Option<Preview>,
+    ) -> Option<Inverse> {
+        let (Change::Silence(silence), Some(class), Some(preview)) =
+            (&change.change, class, preview)
+        else {
+            return None;
+        };
+        action.tier = if class.is_narrow() {
+            Tier::Reversible
+        } else {
+            Tier::SpecChange
+        };
+        action.sentence = silence_sentence(silence, class, preview.muted);
+        if !class.is_narrow() {
+            return None;
+        }
+        // Its way back, Expire of the id, is known once it is accepted.
+        action.changes[0].inverse = Some(crate::write::InverseFrom::after_accept());
+        Some(Inverse {
+            change: Change::Expire(Box::new(ExpireChange {
+                service: silence.service.clone(),
+                id: String::new(),
+                matchers: vec![],
+                ends_at: None,
+            })),
+            observe: Observation::SilenceExpired,
+            guard: Observation::Unobservable,
+        })
     }
 
     /// The preview of a silence and how it is classed. Example data has no
@@ -366,7 +445,7 @@ impl Runner {
                 })?;
                 let class = classify(&silence.draft, &now, level)
                     .map_err(|refusal| NotSent::Unchecked(refusal.words()))?;
-                let same = seen.preview.as_ref().is_some_and(|p| same_alerts(p, &now))
+                let same = seen.preview.as_ref().is_some_and(|p| p.same_as(&now))
                     && seen.class.as_ref() == Some(&class);
                 if same { Ok(()) } else { Err(moved()) }
             }

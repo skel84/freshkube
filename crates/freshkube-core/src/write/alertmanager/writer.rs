@@ -100,14 +100,16 @@ impl Preview {
         }
     }
 
-    /// Whether `other` muted the same alerts: the same set, counted the same
-    /// way. A preview that wasn't counted exactly is never the same as
-    /// another: what it muted is not known.
+    /// Whether `other` muted the same alerts. The clusters they reach and
+    /// the count of other clusters' alerts must match too, so a broad silence
+    /// that has spread into another cluster is not the one that was shown.
+    /// The set of alerts is compared when it was counted exactly; a count
+    /// past the bound can't be listed, so it is compared as a count.
     pub fn same_as(&self, other: &Self) -> bool {
-        self.muted.is_exact()
-            && other.muted.is_exact()
-            && self.muted == other.muted
-            && self.fingerprints == other.fingerprints
+        self.muted == other.muted
+            && self.clusters == other.clusters
+            && self.other_clusters == other.other_clusters
+            && (!self.muted.is_exact() || self.fingerprints == other.fingerprints)
     }
 }
 
@@ -387,6 +389,11 @@ impl AlertWriter {
 
     /// One request through the proxy: the status and the body, bounded by
     /// the timeout and `limit`. Errors name neither the server nor a token.
+    ///
+    /// Private, and called only from `preview`, `read_back` (GET), `create`
+    /// (POST) and `expire` (DELETE): a new write method is a new caller here,
+    /// which review of this file sees, and `safety_g29`'s recorded requests
+    /// show.
     async fn send(
         &self,
         method: Method,

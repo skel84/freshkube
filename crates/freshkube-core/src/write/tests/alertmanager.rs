@@ -400,6 +400,148 @@ async fn safety_g31_a_central_store_without_a_cluster_label_sends_nothing() {
     assert!(fake.recorder.requests().is_empty());
 }
 
+fn cluster_silence(id: &str, cluster: &str) -> crate::monitoring::alerts::Silence {
+    crate::monitoring::alerts::Silence {
+        id: id.into(),
+        state: crate::monitoring::alerts::SilenceState::Active,
+        matchers: vec![
+            matcher("cluster", cluster, false, true),
+            matcher("alertname", "HighLatency", false, true),
+        ],
+        created_by: "someone".into(),
+        comment: "planned".into(),
+        starts_at: None,
+        ends_at: "2026-01-01T12:00:00Z".parse().ok(),
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn safety_g31_an_expire_without_a_scope_or_cluster_label_sends_nothing() {
+    let (fake, dir) = (fake_with_pod_alert(), tmp());
+    let existing = existing_silence(&fake);
+    let expire = || describe_expire(&am::service(), &seen(), &existing);
+    let labelless = runner(&fake, dir.path(), Protection::Open, Scope::NoClusterLabel);
+    assert!(matches!(
+        blocked(labelless.preflight(expire()).await),
+        Block::Refused { .. }
+    ));
+    let unscoped = Runner::new(
+        fake.client.clone(),
+        AuditStore::new(dir.path().join("audit2")),
+        labelless.who().clone(),
+    );
+    assert!(matches!(
+        blocked(unscoped.preflight(expire()).await),
+        Block::Refused { .. }
+    ));
+    assert!(fake.recorder.requests().is_empty(), "not even a read");
+}
+
+#[tokio::test(start_paused = true)]
+async fn safety_g31_an_expire_is_held_to_the_strictest_level_of_the_clusters_it_reaches() {
+    let fake = Fake::new();
+    fake.add_cluster_silence("sil-ams", "prod-ams");
+    fake.add_cluster_silence("sil-fra", "prod-fra");
+    fake.add_silence("sil-any", "active", "someone", "planned");
+    let dir = tmp();
+    let scope = central(&[
+        ("prod-fra", Protection::Open),
+        ("prod-ams", Protection::ReadOnly),
+    ]);
+    // A window on an open entry can't end prod-ams' silence while prod-ams
+    // is read-only.
+    let runner = runner(&fake, dir.path(), Protection::Open, scope);
+    let ams = describe_expire(
+        &am::service(),
+        &seen(),
+        &cluster_silence("sil-ams", "prod-ams"),
+    );
+    assert!(matches!(
+        blocked(runner.preflight(ams).await),
+        Block::ReadOnly(_)
+    ));
+    // One with no exact cluster matcher reaches every entry.
+    let any = existing_silence_of(&fake);
+    let any = describe_expire(&am::service(), &seen(), &any);
+    assert!(matches!(
+        blocked(runner.preflight(any).await),
+        Block::ReadOnly(_)
+    ));
+    assert!(fake.recorder.requests().is_empty(), "not even a read");
+    // The window's own cluster's silence is held to this entry alone.
+    let fra = describe_expire(
+        &am::service(),
+        &seen(),
+        &cluster_silence("sil-fra", "prod-fra"),
+    );
+    let prepared = ready(&runner, fra).await;
+    let finished = run(&runner, prepared, Confirmation::Confirmed).await;
+    assert_eq!(finished.headline(), Headline::Done);
+    assert_eq!(fake.silence_state("sil-fra").as_deref(), Some("expired"));
+}
+
+fn existing_silence_of(_fake: &Fake) -> crate::monitoring::alerts::Silence {
+    crate::monitoring::alerts::Silence {
+        id: "sil-any".into(),
+        state: crate::monitoring::alerts::SilenceState::Active,
+        matchers: vec![matcher("alertname", "HighLatency", false, true)],
+        created_by: "someone".into(),
+        comment: "planned".into(),
+        starts_at: None,
+        ends_at: "2026-01-01T12:00:00Z".parse().ok(),
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_page_cannot_turn_off_the_confirmation_or_name_another_service() {
+    let (fake, dir) = (fake_with_pod_alert(), tmp());
+    let runner = runner(&fake, dir.path(), Protection::Protected, Scope::Cluster);
+    let mut action = silence(pod_matchers(), 2);
+    action.no_confirmation = true;
+    action.changes[0].target.name = "somewhere-else".into();
+    action.changes[0].depends.clear();
+    let prepared = ready(&runner, action).await;
+    assert!(prepared.requirement().confirm);
+    assert!(prepared.requirement().type_name);
+    let target = &prepared.description().changes[0].target;
+    assert_eq!(target.name, am::service().name);
+    assert_eq!(prepared.description().changes[0].depends.len(), 1);
+
+    let existing = existing_silence(&fake);
+    let mut expire = describe_expire(&am::service(), &seen(), &existing);
+    expire.no_confirmation = true;
+    expire.tier = Tier::Session;
+    let prepared = ready(&runner, expire).await;
+    assert_eq!(prepared.description().tier, Tier::Reversible);
+    assert!(prepared.requirement().confirm && prepared.requirement().type_name);
+}
+
+#[tokio::test(start_paused = true)]
+async fn an_example_runners_expire_asks_nothing_of_a_cluster() {
+    let dir = tmp();
+    let runner = Runner::example_offline(
+        AuditStore::new(dir.path().join("audit")),
+        Who {
+            entry: "prod-fra".into(),
+            context: "ctx-a".into(),
+            protection: Protection::Guarded,
+            actor: "tester".into(),
+        },
+    )
+    .with_alert_scope(Scope::Cluster);
+    let existing = crate::monitoring::alerts::Silence {
+        id: "sil-9".into(),
+        state: crate::monitoring::alerts::SilenceState::Active,
+        matchers: vec![matcher("alertname", "HighLatency", false, true)],
+        created_by: "someone".into(),
+        comment: "planned".into(),
+        starts_at: None,
+        ends_at: None,
+    };
+    let expire = describe_expire(&am::service(), &seen(), &existing);
+    assert!(matches!(runner.preflight(expire).await, Verdict::Ready(_)));
+}
+
 #[tokio::test(start_paused = true)]
 async fn a_silence_is_sent_once_observed_and_audited_without_values() {
     let (fake, dir) = (fake_with_pod_alert(), tmp());

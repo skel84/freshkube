@@ -185,6 +185,22 @@ impl Fake {
         }));
     }
 
+    /// An active silence of one cluster's alert, as a shared store holds it.
+    pub fn add_cluster_silence(&self, id: &str, cluster: &str) {
+        self.state().silences.push(json!({
+            "id": id,
+            "status": {"state": "active"},
+            "matchers": [
+                {"name": "cluster", "value": cluster, "isRegex": false, "isEqual": true},
+                {"name": "alertname", "value": "HighLatency", "isRegex": false, "isEqual": true},
+            ],
+            "createdBy": "someone",
+            "comment": "planned",
+            "startsAt": "2026-01-01T10:00:00.000Z",
+            "endsAt": "2026-01-01T12:00:00.000Z",
+        }));
+    }
+
     /// The silences the fake holds now.
     pub fn silences(&self) -> Vec<Value> {
         self.state().silences.clone()

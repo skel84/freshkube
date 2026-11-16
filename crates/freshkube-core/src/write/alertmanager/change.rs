@@ -122,7 +122,7 @@ pub struct ServiceSeen {
     pub resource_version: String,
 }
 
-fn service_target(service: &PrometheusService, seen: &ServiceSeen) -> Target {
+pub(crate) fn service_target(service: &PrometheusService, seen: &ServiceSeen) -> Target {
     Target {
         group: String::new(),
         version: "v1".into(),

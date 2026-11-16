@@ -280,10 +280,12 @@ An equality `alertname` and another equality matcher on an identifying label, no
 
 ### 31. On a shared Alertmanager a silence carries this entry's exact cluster matcher or is broad at the strictest level, and a store with no cluster label gets no write
 
-The runner builds the silence's mode from the scope it resolved, never from the page. Without this entry's exact `cluster` matcher the silence is broad and held to the strictest level of every entry that shares the store (one `read-only` entry blocks it); a store whose alerts carry no cluster label, or a runner never told its scope, sends nothing.
+The runner builds the silence's mode from the scope it resolved, never from the page. Without this entry's exact `cluster` matcher the silence is broad and held to the strictest level of every entry that shares the store (one `read-only` entry blocks it); a store whose alerts carry no cluster label, or a runner never told its scope, sends nothing. An Expire goes through the same gate: it is refused without a scope, and on a shared store it is held to the strictest level of the entries its silence's exact `cluster` matcher names, or of every entry when it has none.
 
 - `safety_g31_central_silence_without_exact_cluster_is_broad_at_the_strictest_level` (`crates/freshkube-core/src/write/tests/alertmanager.rs`)
 - `safety_g31_a_central_store_without_a_cluster_label_sends_nothing` (`crates/freshkube-core/src/write/tests/alertmanager.rs`)
+- `safety_g31_an_expire_without_a_scope_or_cluster_label_sends_nothing` (`crates/freshkube-core/src/write/tests/alertmanager.rs`)
+- `safety_g31_an_expire_is_held_to_the_strictest_level_of_the_clusters_it_reaches` (`crates/freshkube-core/src/write/tests/alertmanager.rs`)
 
 ## Known gaps
 
